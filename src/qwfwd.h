@@ -456,9 +456,15 @@ void				SVC_QRY_PingStatus(void);
 #define MESH_MSG_PINGSTATUS_REPLY	1	// reply to our own "pingstatus" probe
 #define MESH_MSG_MESHSTATUS_REPLY	2	// reply to "meshstatus" collector query
 
-// hard cap on hop2 entries kept per mesh peer - bounds memory
-// (MAX_SERVERS peers * MESH_MAX_HOP2_PER_PEER entries * sizeof(hop2_entry_t))
-#define MESH_MAX_HOP2_PER_PEER 128
+// hard cap on hop2 entries kept per mesh peer - bounds memory AND must fit
+// a single peer block inside one unfragmented UDP datagram (MAX_MSGLEN).
+// Each entry is 12 bytes (ip+port+ping+jitter+loss_pct); a peer block also
+// carries a 10-byte sub-header. 100 * 12 + 10 = 1210 bytes, safely under
+// MAX_MSGLEN (1450) with headroom for the mesh reply's own 11-byte OOB
+// header - unlike the previous value (128), which could produce a block
+// (128*12+10=1546) that never fits and would stall meshstatus pagination
+// against a legitimately (or maliciously) large hop2 set.
+#define MESH_MAX_HOP2_PER_PEER 100
 
 // one measured edge: <peer> -> <addr> costs <ping> ms avg, as reported by
 // <peer>, with quality stats accumulated over that peer's own natural ping

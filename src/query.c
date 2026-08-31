@@ -758,15 +758,18 @@ void SVC_QRY_MeshProbe(void)
 	if (!mesh_enable->integer || !masters_query->integer)
 		return; // mesh disabled or we don't keep an authoritative server list to report
 
-	if (QRY_Mesh_RateLimited(&net_from))
-		return;
-
+	// validate the request BEFORE spending rate-limit budget on it - a
+	// malformed query costs us nothing to reject, so it should not consume
+	// the same 1-per-second slot a legitimate probe would need
 	nonce_str = Cmd_Argv(1);
 	if (!nonce_str[0])
 		return; // malformed query, no nonce to echo back
 
 	nonce = (unsigned int) strtoul(nonce_str, NULL, 10);
 	if (!nonce)
+		return;
+
+	if (QRY_Mesh_RateLimited(&net_from))
 		return;
 
 	SZ_InitEx(&buf, buf_data, sizeof(buf_data), true);
@@ -1136,6 +1139,7 @@ static void QRY_Mesh_StoreHop2(server_t *sv, struct sockaddr_in *addr, int ping,
 static void QRY_Mesh_QueryPeers(void)
 {
 	static int		idx;
+	static double	last;
 	double			current = Sys_DoubleTime();
 	server_t		*sv;
 	int				count, i;
@@ -1145,6 +1149,16 @@ static void QRY_Mesh_QueryPeers(void)
 
 	if (!servers)
 		return;
+
+	// same throttle shape as QRY_SV_PingServers (QW_SERVER_RATE): without
+	// this, a fresh boot with hundreds of newly-discovered servers (none
+	// yet mesh_probed) would fire one probe per main-loop iteration back
+	// to back, a real startup burst the per-target interval alone does not
+	// prevent (that interval only rate-limits re-probes of the SAME
+	// target, not the aggregate rate across all targets)
+	if (current - last < QW_SERVER_RATE)
+		return;
+	last = current;
 
 	count = QRY_SV_Count();
 	if (count <= 0)
