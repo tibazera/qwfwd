@@ -3,6 +3,7 @@
 */
 
 #include "qwfwd.h"
+#include "stun.h"
 
 peer_t *peers = NULL;
 static int userid = 0;
@@ -261,6 +262,18 @@ retry:
 
 				continue;
 			}
+
+			// STUN Binding Requests (browser RTT probing, opt-in via
+			// stun_enable) never start with the 0xFFFFFFFF OOB marker
+			// Quake's own connectionless dispatch expects, so they must
+			// be recognized here, before MSG_BeginReading/MSG_ReadLong
+			// try to interpret them as a Quake packet. STUN_HandlePacket
+			// itself checks stun_enable and returns false immediately
+			// for any non-STUN or malformed packet (including when the
+			// feature is off), so this is a no-op fast rejection when
+			// disabled - normal Quake dispatch below is unaffected.
+			if (STUN_HandlePacket(net_message.data, net_message.cursize, &net_from))
+				continue;
 
 			MSG_BeginReading();
 			connectionless = (MSG_ReadLong() == -1);

@@ -5,6 +5,7 @@
 */
 
 #include "qwfwd.h"
+#include "stun.h"
 
 #ifndef _WIN32
 #define DWORD unsigned int
@@ -147,7 +148,8 @@ DWORD WINAPI FWD_proc(void *lpParameter)
 	Ban_Init();				// init bans, this will exec "qwfwd_listip.cfg" as well, so you don't have to put it in qwfwd.cfg
 	NET_Init();				// init network
 	FWD_Init();				// init peers
-	QRY_Init();				// init query 
+	QRY_Init();				// init query
+	STUN_Init();			// init STUN responder (opt-in, off by default)
 
 	ps.initialized = true;
 
