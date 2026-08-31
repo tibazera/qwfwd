@@ -460,11 +460,15 @@ void				SVC_QRY_PingStatus(void);
 // (MAX_SERVERS peers * MESH_MAX_HOP2_PER_PEER entries * sizeof(hop2_entry_t))
 #define MESH_MAX_HOP2_PER_PEER 128
 
-// one measured edge: <peer> -> <addr> costs <ping> ms, as reported by <peer>
+// one measured edge: <peer> -> <addr> costs <ping> ms avg, as reported by
+// <peer>, with quality stats accumulated over that peer's own natural ping
+// cadence (see PING_QUALITY_WINDOW in query.c) - not a single sample
 typedef struct hop2_entry_s
 {
-	struct sockaddr_in	addr;	// target address (not the peer itself)
-	int					ping;	// ping in ms, as reported by the peer
+	struct sockaddr_in	addr;		// target address (not the peer itself)
+	int					ping;		// average ping in ms, as reported by the peer
+	int					jitter;		// stddev of ping in ms
+	int					loss_pct;	// packet loss percent (0-100)
 } hop2_entry_t;
 
 qbool				QRY_Mesh_IsMeshReply(void);

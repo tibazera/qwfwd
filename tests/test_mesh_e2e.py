@@ -157,11 +157,12 @@ def main():
     if a_discovered_mesh:
         # QW wire integers (MSG_WriteShort/Long) are little-endian; only the
         # raw 4-byte IP itself is left as network-order bytes (not a number
-        # to byte-swap, just read left-to-right as octets)
-        peer_ip_raw = reply_a[11:15]
-        peer_port = struct.unpack("<H", reply_a[15:17])[0]
-        peer_age = struct.unpack("<h", reply_a[17:19])[0]
-        peer_count = struct.unpack("<h", reply_a[19:21])[0]
+        # to byte-swap, just read left-to-right as octets). Header is now
+        # 15 bytes (11 base + 4-byte next_index pagination cursor).
+        peer_ip_raw = reply_a[15:19]
+        peer_port = struct.unpack("<H", reply_a[19:21])[0]
+        peer_age = struct.unpack("<h", reply_a[21:23])[0]
+        peer_count = struct.unpack("<h", reply_a[23:25])[0]
         print(f"  A sees mesh peer {'.'.join(str(b) for b in peer_ip_raw)}:{peer_port} age={peer_age}s hop2_count={peer_count}")
         check("a_sees_b_port", peer_port == PORT_B, f"got port {peer_port}, want {PORT_B}")
 

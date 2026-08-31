@@ -23,6 +23,8 @@
 
 #define MAX_SERVERS 512 // we will not add more than that servers to our list, just for some sanity
 
+#define PING_QUALITY_WINDOW 8 // samples kept per server to compute avg/jitter/loss (accumulated over natural ping cadence, no extra traffic)
+
 #define MAX_SV_FILTERS 16 // how much servers we can filter with masters_filter_servers, can be increased widely.
 #define QW_DEFAULT_SV_FILTER "127.0.0.1" // some masters provide unusable servers, filter them.
 
@@ -78,7 +80,14 @@ typedef struct server
 	double					ping_sent_at;	// last time when we send ping request, so we can calculate ping time
 	double					ping_reply_at;	// last time when we receive ping reply from server,
 											// so we can guess is server dead etc
-	int						ping;			// ping to that server in milliseconds
+	int						ping;			// ping to that server in milliseconds (most recent sample, kept for backward compat with existing pingstatus consumers)
+
+	// quality window: last PING_QUALITY_WINDOW attempts (success = rtt in ms,
+	// failure = -1), circular buffer, accumulated over the natural ping
+	// cadence (no extra probe traffic). Used to derive avg/jitter/loss.
+	short					ping_samples[PING_QUALITY_WINDOW];
+	int						ping_samples_count;	// how many slots are filled so far (caps at PING_QUALITY_WINDOW)
+	int						ping_samples_next;		// next slot to write (wraps around)
 
 	// mesh (P2P discovery between qwfwd instances) state
 	qbool					mesh_probed;		// we've sent at least one pingstatus probe
@@ -466,6 +475,88 @@ static void QRY_SV_free(server_t *sv, qbool unlink)
 	sv_count--;
 }
 
+//==============================================
+// ping quality window: circular buffer of the last PING_QUALITY_WINDOW
+// direct-ping outcomes for a server (rtt in ms, or -1 for a lost packet).
+// Accumulated over the existing ~60s ping cadence in QRY_SV_PingServers -
+// no extra probe traffic - so avg/jitter/loss are derived from real,
+// naturally-occurring samples rather than a synthetic burst.
+
+static void QRY_Quality_AddSample(server_t *sv, short sample)
+{
+	if (!sv)
+		return;
+
+	sv->ping_samples[sv->ping_samples_next] = sample;
+	sv->ping_samples_next = (sv->ping_samples_next + 1) % PING_QUALITY_WINDOW;
+	if (sv->ping_samples_count < PING_QUALITY_WINDOW)
+		sv->ping_samples_count++;
+}
+
+// computes avg/min/max/jitter (population stddev, integer ms) and loss
+// percent (0-100) over the current sample window. Returns false (all
+// outputs zeroed) if there are no samples yet - caller must check this
+// before trusting the outputs, since "no data" and "0ms/0% loss" are not
+// the same thing.
+static qbool QRY_Quality_Compute(const server_t *sv, int *avg, int *jitter, int *loss_pct)
+{
+	int i, n = 0, sum = 0, sumsq_scaled = 0;
+	int received = 0;
+
+	*avg = 0;
+	*jitter = 0;
+	*loss_pct = 0;
+
+	if (!sv || sv->ping_samples_count <= 0)
+		return false;
+
+	for (i = 0; i < sv->ping_samples_count; i++)
+	{
+		short s = sv->ping_samples[i];
+		if (s >= 0)
+		{
+			sum += s;
+			received++;
+		}
+	}
+	n = sv->ping_samples_count;
+
+	*loss_pct = (int) (100 - (100 * received) / n);
+
+	if (received <= 0)
+		return true; // 100% loss, no rtt stats possible
+
+	*avg = sum / received;
+
+	// population variance over received samples only (loss doesn't have an
+	// rtt to contribute to jitter) - fixed-point (x10) to keep this integer
+	// math without pulling in <math.h> sqrt for a small embedded daemon
+	for (i = 0; i < sv->ping_samples_count; i++)
+	{
+		short s = sv->ping_samples[i];
+		if (s >= 0)
+		{
+			int diff = s - *avg;
+			sumsq_scaled += diff * diff;
+		}
+	}
+	{
+		int variance = sumsq_scaled / received;
+		// integer sqrt (Newton's method, converges in a handful of
+		// iterations for the small values ping jitter produces)
+		int x = variance;
+		int y = (x + 1) / 2;
+		while (y < x)
+		{
+			x = y;
+			y = (x + variance / x) / 2;
+		}
+		*jitter = x;
+	}
+
+	return true;
+}
+
 static void QRY_SV_PingServers(void)
 {
 	static int		idx;
@@ -507,6 +598,13 @@ static void QRY_SV_PingServers(void)
 	if (sv->ping_sent_at && current - sv->ping_sent_at < QW_SERVER_MIN_PING_REQUEST_TIME)
 		return; // do not spam server
 
+	// about to send a new probe: if the PREVIOUS one never got a reply,
+	// that is a genuine lost packet - record it as a failed sample (-1)
+	// before overwriting ping_sent_at, so quality stats reflect real loss
+	// accumulated over the natural ping cadence, without any extra traffic
+	if (sv->ping_sent_at && !sv->reply)
+		QRY_Quality_AddSample(sv, -1);
+
 	sv->ping_sent_at = current; // remember when we sent ping
 	sv->reply = false; // reset reply flag
 
@@ -535,6 +633,8 @@ void QRY_SV_PingReply(void)
 		sv->ping = (int)max(0, 1000.0 * ping);
 		sv->ping_reply_at = current;
 		sv->reply = true;
+
+		QRY_Quality_AddSample(sv, (short) sv->ping);
 
 //		Sys_Printf("ping <- %s:%d, %d\n", inet_ntoa(net_from.sin_addr), (int)ntohs(net_from.sin_port), sv->ping);
 	}
@@ -640,7 +740,7 @@ void SVC_QRY_MeshProbe(void)
 	char				*nonce_str;
 	unsigned int		nonce;
 	static sizebuf_t	buf;
-	static byte			buf_data[MSG_BUF_SIZE];
+	static byte			buf_data[MAX_MSGLEN];
 	server_t			*sv;
 	int					entries_written = 0;
 
@@ -666,19 +766,34 @@ void SVC_QRY_MeshProbe(void)
 	MSG_WriteByte(&buf, MESH_MSG_PINGSTATUS_REPLY);
 	MSG_WriteLong(&buf, (int) nonce);
 
-	// report OUR OWN directly-measured pings to known servers - this is the
-	// 1-hop data this peer contributes to whoever is probing us
+	// report OUR OWN directly-measured pings to known servers, WITH quality
+	// (avg/jitter/loss over the accumulated sample window, see
+	// QRY_Quality_Compute) - this is the 1-hop data this peer contributes to
+	// whoever is probing us. Entry is now 12 bytes: ip(4) port(2) avg_ping(2)
+	// jitter(2) loss_pct(2). Servers with no samples yet (freshly discovered,
+	// window still empty) are skipped rather than reported with fabricated
+	// zeros - "no data" must not look identical to "0ms/0% loss".
 	for (sv = servers; sv && !buf.overflowed; sv = sv->next)
 	{
-		if (sv->ping < 0 || sv->ping >= 0xFFFF)
-			continue; // unreachable/unmeasured, do not report
+		int avg, jitter, loss_pct;
+
+		if (!QRY_Quality_Compute(sv, &avg, &jitter, &loss_pct))
+			continue; // no samples yet for this server
+
+		if (loss_pct >= 100)
+			continue; // fully unreachable, nothing useful to report
 
 		if (entries_written >= MESH_MAX_HOP2_PER_PEER)
-			break; // cap response size, avoid MTU-busting a single datagram
+			break; // cap response size, headroom checked against MAX_MSGLEN below regardless
 
-		MSG_WriteLong(&buf, *(int *) &sv->addr.sin_addr);
+		if (buf.cursize + 12 > (int) sizeof(buf_data) - 16)
+			break; // would not fit a whole entry in this single UDP datagram, stop rather than fragment IP
+
+		MSG_WriteLong(&buf, QRY_IPv4AsInt(&sv->addr.sin_addr));
 		MSG_WriteShort(&buf, (short) ntohs(sv->addr.sin_port));
-		MSG_WriteShort(&buf, (short) sv->ping);
+		MSG_WriteShort(&buf, (short) avg);
+		MSG_WriteShort(&buf, (short) jitter);
+		MSG_WriteShort(&buf, (short) loss_pct);
 		entries_written++;
 	}
 
@@ -691,22 +806,38 @@ void SVC_QRY_MeshProbe(void)
 	NET_SendPacket(net_from_socket, buf.cursize, buf.data, &net_from);
 }
 
-// answers "meshstatus": exposes the hop2 cache (pings reported by OUR mesh
-// peers about THEIR neighbours) to an external collector building the
-// worldwide route map. Paginated by peer so a single reply never exceeds
-// MSG_BUF_SIZE / MAX_MSGLEN regardless of mesh size.
+// answers "meshstatus [start_index]": exposes the hop2 cache (pings
+// reported by OUR mesh peers about THEIR neighbours) to an external
+// collector building the worldwide route map.
+//
+// Real pagination, not a silent truncation: the response is bounded by
+// MAX_MSGLEN (the actual QW/UDP wire limit - MSG_BUF_SIZE is just a local
+// scratch buffer and is NOT safe to use as the network size cap, a full
+// buffer's worth would fragment at the IP layer and can be dropped by
+// firewalls/routers in between). start_index selects which mesh peer to
+// begin listing from (servers list order); the reply ends with a
+// next_index field so the collector can keep calling "meshstatus N" until
+// it gets next_index == -1 (all peers covered).
 void SVC_QRY_MeshStatus(void)
 {
 	static sizebuf_t	buf;
-	static byte			buf_data[MSG_BUF_SIZE];
+	static byte			buf_data[MAX_MSGLEN];
 	server_t			*sv;
 	double				current;
+	char				*arg;
+	int					start_index, index, next_index;
+	int					next_index_offset;
 
 	if (!mesh_enable->integer)
 		return;
 
 	if (QRY_Mesh_RateLimited(&net_from))
 		return;
+
+	arg = Cmd_Argv(1);
+	start_index = arg[0] ? atoi(arg) : 0;
+	if (start_index < 0)
+		start_index = 0;
 
 	current = Sys_DoubleTime();
 
@@ -717,10 +848,19 @@ void SVC_QRY_MeshStatus(void)
 	MSG_WriteByte(&buf, (byte) MESH_MAGIC1);
 	MSG_WriteByte(&buf, MESH_MSG_MESHSTATUS_REPLY);
 	MSG_WriteLong(&buf, 0); // reserved
+	next_index_offset = buf.cursize;
+	MSG_WriteLong(&buf, -1); // next_index placeholder, patched below once known
 
-	for (sv = servers; sv; sv = sv->next)
+	next_index = -1;
+	index = 0;
+
+	for (sv = servers; sv; sv = sv->next, index++)
 	{
 		int i, age, count;
+		int block_start;
+
+		if (index < start_index)
+			continue;
 
 		if (!sv->is_mesh || sv->hop2_count <= 0)
 			continue;
@@ -733,23 +873,41 @@ void SVC_QRY_MeshStatus(void)
 		if (age < 0) age = 0;
 		if (age > 0x7FFF) age = 0x7FFF;
 
-		// bail out BEFORE starting a peer block we can't finish whole -
-		// a collector must never see a truncated peer's neighbour list
-		if (buf.cursize + 10 + count * 8 > (int) sizeof(buf_data) - 32)
-			break;
+		block_start = buf.cursize;
 
-		MSG_WriteLong(&buf, *(int *) &sv->addr.sin_addr);
+		// bail out BEFORE starting a peer block we can't finish whole -
+		// a collector must never see a truncated peer's neighbour list.
+		// Leave headroom for the trailing OOB overhead so this stays a
+		// single unfragmented UDP datagram. Each hop2 entry is now 12 bytes
+		// (ip+port+ping+jitter+loss_pct).
+		if (block_start + 10 + count * 12 > (int) sizeof(buf_data) - 16)
+		{
+			next_index = index; // caller resumes here with "meshstatus <next_index>"
+			break;
+		}
+
+		MSG_WriteLong(&buf, QRY_IPv4AsInt(&sv->addr.sin_addr));
 		MSG_WriteShort(&buf, (short) ntohs(sv->addr.sin_port));
 		MSG_WriteShort(&buf, (short) age);
 		MSG_WriteShort(&buf, (short) count);
 
 		for (i = 0; i < count; i++)
 		{
-			MSG_WriteLong(&buf, *(int *) &sv->hop2[i].addr.sin_addr);
+			MSG_WriteLong(&buf, QRY_IPv4AsInt(&sv->hop2[i].addr.sin_addr));
 			MSG_WriteShort(&buf, (short) ntohs(sv->hop2[i].addr.sin_port));
 			MSG_WriteShort(&buf, (short) sv->hop2[i].ping);
+			MSG_WriteShort(&buf, (short) sv->hop2[i].jitter);
+			MSG_WriteShort(&buf, (short) sv->hop2[i].loss_pct);
 		}
 	}
+
+	// patch the next_index placeholder now that it is known - buf.data is
+	// the same backing array the earlier MSG_WriteLong targeted, safe to
+	// overwrite in place since sizebuf_t is a flat byte buffer
+	buf.data[next_index_offset + 0] = (byte) (next_index & 0xff);
+	buf.data[next_index_offset + 1] = (byte) ((next_index >> 8) & 0xff);
+	buf.data[next_index_offset + 2] = (byte) ((next_index >> 16) & 0xff);
+	buf.data[next_index_offset + 3] = (byte) ((next_index >> 24) & 0xff);
 
 	if (buf.overflowed)
 	{
@@ -895,6 +1053,17 @@ static void QRY_Cmd_SvList_f(void)
 // server or mvdsv simply won't understand "pingstatus" and will not reply
 // in our expected format, so it is never misclassified as mesh-capable.
 
+// explicit byte copy of a raw IPv4 address into a machine int for
+// MSG_WriteLong - avoids the strict-aliasing UB of casting a
+// struct in_addr* to int* (the original SVC_QRY_PingStatus code does this
+// cast; new mesh code uses this helper instead of repeating the hazard)
+static int QRY_IPv4AsInt(const struct in_addr *addr)
+{
+	int value;
+	memcpy(&value, addr, sizeof(value));
+	return value;
+}
+
 // generates a nonzero 32-bit nonce; 0 is reserved for "no outstanding probe"
 static unsigned int QRY_Mesh_NewNonce(void)
 {
@@ -910,11 +1079,19 @@ static unsigned int QRY_Mesh_NewNonce(void)
 
 // capacity-doubling append, avoids a realloc() per received entry which
 // would fragment the heap on a long-running daemon
-static void QRY_Mesh_StoreHop2(server_t *sv, struct sockaddr_in *addr, int ping)
+static void QRY_Mesh_StoreHop2(server_t *sv, struct sockaddr_in *addr, int ping, int jitter, int loss_pct)
 {
 	int i;
 
 	if (!sv || ping < 0)
+		return;
+
+	// drop self-references: a peer reporting a ping to itself (its own
+	// address in its own self-reported list) is not a routable edge and
+	// would otherwise show up as a spurious 0ms "next hop" pointing back
+	// at the same node - a naive collector could pick it as the "best"
+	// route to itself
+	if (memcmp(&sv->addr, addr, sizeof(struct sockaddr_in)) == 0)
 		return;
 
 	// update existing entry for the same target instead of duplicating
@@ -923,6 +1100,8 @@ static void QRY_Mesh_StoreHop2(server_t *sv, struct sockaddr_in *addr, int ping)
 		if (memcmp(&sv->hop2[i].addr, addr, sizeof(struct sockaddr_in)) == 0)
 		{
 			sv->hop2[i].ping = ping;
+			sv->hop2[i].jitter = jitter;
+			sv->hop2[i].loss_pct = loss_pct;
 			return;
 		}
 	}
@@ -948,6 +1127,8 @@ static void QRY_Mesh_StoreHop2(server_t *sv, struct sockaddr_in *addr, int ping)
 
 	sv->hop2[sv->hop2_count].addr = *addr;
 	sv->hop2[sv->hop2_count].ping = ping;
+	sv->hop2[sv->hop2_count].jitter = jitter;
+	sv->hop2[sv->hop2_count].loss_pct = loss_pct;
 	sv->hop2_count++;
 }
 
@@ -1045,17 +1226,18 @@ qbool QRY_Mesh_IsMeshReply(void)
 // parses a MESH_MSG_PINGSTATUS_REPLY payload: strictly-validated sequence of
 // 8-byte records (int32 raw IP + int16 port host-order + int16 ping).
 // every read is bounds-checked against buflen before touching memory; a
-// truncated trailing record (buflen not a multiple of 8) is ignored rather
-// than read out of bounds.
+// truncated trailing record (buflen not a multiple of 12) is ignored rather
+// than read out of bounds. Entry layout: ip(4) port(2) avg_ping(2)
+// jitter(2) loss_pct(2) = 12 bytes.
 static void QRY_Mesh_ParsePingStatusPayload(server_t *sv, const byte *buf, size_t buflen)
 {
 	size_t offset = 0;
 
-	while (offset + 8 <= buflen)
+	while (offset + 12 <= buflen)
 	{
 		struct sockaddr_in addr;
 		unsigned short port_h;
-		short ping;
+		short ping, jitter, loss_pct;
 
 		memset(&addr, 0, sizeof(addr));
 		addr.sin_family = AF_INET;
@@ -1065,11 +1247,13 @@ static void QRY_Mesh_ParsePingStatusPayload(server_t *sv, const byte *buf, size_
 		addr.sin_port = htons(port_h);
 
 		ping = (short) (buf[offset+6] | (buf[offset+7] << 8));
+		jitter = (short) (buf[offset+8] | (buf[offset+9] << 8));
+		loss_pct = (short) (buf[offset+10] | (buf[offset+11] << 8));
 
-		if (ping >= 0)
-			QRY_Mesh_StoreHop2(sv, &addr, ping);
+		if (ping >= 0 && jitter >= 0 && loss_pct >= 0 && loss_pct <= 100)
+			QRY_Mesh_StoreHop2(sv, &addr, ping, jitter, loss_pct);
 
-		offset += 8;
+		offset += 12;
 	}
 }
 
@@ -1084,8 +1268,11 @@ void QRY_Mesh_HandleReply(void)
 	unsigned int	nonce;
 	server_t		*sv;
 
-	if (len < 12) // 4 (oob) + 2 (magic) + 1 (type) + 4 (nonce) + 1 (padding), see wire format below
+	if (len < 11) // 4 (oob) + 2 (magic) + 1 (type) + 4 (nonce) = 11 bytes exactly, zero-entry replies are exactly this length
 		return;
+
+	if ((len - 11) % 12 != 0)
+		return; // trailing bytes not a whole number of 12-byte entries: malformed/truncated, reject the whole reply rather than parse a partial one
 
 	type = data[6];
 

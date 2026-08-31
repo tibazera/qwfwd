@@ -104,7 +104,9 @@ def main():
             check("meshstatus_reply_magic", magic_ok, f"got={reply[4:6]!r}")
             msg_type = reply[6]
             check("meshstatus_reply_type_is_2", msg_type == 2, f"type={msg_type}")
-            check("meshstatus_empty_when_no_mesh_peers", len(reply) == 11, f"len={len(reply)}")
+            check("meshstatus_empty_when_no_mesh_peers", len(reply) == 15, f"len={len(reply)}")
+            next_index = struct.unpack("<i", reply[11:15])[0]
+            check("meshstatus_next_index_is_minus_one_when_done", next_index == -1, f"next_index={next_index}")
 
         # --- Test 6: rate limiting - hammer meshprobe from the same source,
         # only the first reply within the window should arrive; a flood
