@@ -620,11 +620,16 @@ function renderTopRoutes(addr, result) {
     routes.forEach((r, idx) => {
       const city = r.to_geo ? `${r.to_geo.city}, ${r.to_geo.country_code}` : r.to;
       const isPinned = PINNED_PROXIES.has(r.to);
-      // path[0] is the origin itself, path[1] is the first proxy the
-      // client actually connects to (what cl_proxy_addr must point at) -
-      // intermediate/final hops after that are relayed proxy-side, the
-      // client never talks to them directly.
-      const firstHopAddr = r.path && r.path.length > 1 ? r.path[1] : r.to;
+      // cl_proxyaddr syntax (unezQuake, EX_browser_pathfind.c:791-809):
+      // intermediate proxies only, "@"-joined, in near-to-far order
+      // (client's first hop first). The final destination is NOT part of
+      // this string - it's what "connect <addr>" targets separately.
+      // path = [origin, hop1, hop2, ..., destination], so the proxy chain
+      // is path[1..len-2] (everything between origin and destination).
+      const proxyChain = r.path && r.path.length > 2 ? r.path.slice(1, -1).join('@') : '';
+      const cmdText = proxyChain
+        ? `cl_proxyaddr ${proxyChain}; connect ${r.to}`
+        : `connect ${r.to}`;
       // Full intermediate chain (skip origin, keep everything through the
       // destination) shown as "ip:port (City, CC)" so the address is
       // always visible next to the human-readable place name.
@@ -641,7 +646,7 @@ function renderTopRoutes(addr, result) {
         </div>
         <div style="font-size:9.5px;color:var(--text-dim);margin-top:3px;font-family:var(--mono)">${hopLine || r.to}</div>
         <div style="display:flex;justify-content:flex-end;margin-top:5px">
-          <button class="btn copy-proxy-btn" data-addr="${firstHopAddr}" style="width:auto;padding:4px 8px;font-size:9.5px">copiar cl_proxy_addr</button>
+          <button class="btn copy-proxy-btn" data-cmd="${cmdText.replace(/"/g, '&quot;')}" style="width:auto;padding:4px 8px;font-size:9.5px">${proxyChain ? 'copiar cl_proxyaddr' : 'copiar connect'}</button>
         </div>
       </div>`;
     });
@@ -665,9 +670,8 @@ function renderTopRoutes(addr, result) {
   document.querySelectorAll('.copy-proxy-btn').forEach(btn => {
     btn.addEventListener('click', async (ev) => {
       ev.stopPropagation();
-      const cmd = `cl_proxy_addr ${btn.dataset.addr}`;
       try {
-        await navigator.clipboard.writeText(cmd);
+        await navigator.clipboard.writeText(btn.dataset.cmd);
         const original = btn.textContent;
         btn.textContent = 'copiado!';
         setTimeout(() => { btn.textContent = original; }, 1400);
