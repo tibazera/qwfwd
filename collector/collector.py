@@ -59,6 +59,18 @@ MASTERS = [
 QW_DATA_SERVERS_URL = "https://raw.githubusercontent.com/vikpe/qw-data/main/servers.json"
 QW_DATA_TIMEOUT = 10.0
 
+# our own 4 mesh-patched pilot instances (Lisbon/São Paulo/Miami/Fortaleza,
+# isolated test ports 30501-30504, not production 30000) - always probed
+# regardless of what masters/qw-data report this cycle, so they never
+# silently drop off the map due to a transient master-query miss. These
+# are the ones we actually want ranked and compared reliably.
+PINNED_PROXIES = [
+    ("103.63.29.40", 30501),   # Lisboa
+    ("54.232.22.245", 30502),  # São Paulo
+    ("140.235.125.12", 30503), # Miami
+    ("201.23.3.62", 30504),    # Fortaleza
+]
+
 PROXY_PORT_HINT = 30000  # convention, not guaranteed - we still verify via protocol response
 DISCOVERY_TIMEOUT = 5.0
 PROBE_TIMEOUT = 1.0
@@ -87,6 +99,17 @@ class GeoInfo:
     lon: float
     hostname: str
     is_proxy: bool
+
+
+# manual geo for our pinned test proxies (real coordinates of the actual
+# datacenters, not the isolated test port itself) - qw-data has no record
+# of ports 305xx since they're not on the public master network
+PINNED_PROXY_GEO = {
+    ("103.63.29.40", 30501): GeoInfo("PT", "Portugal", "Europe", "Lisbon", 38.7223, -9.1393, "qwfwd-mesh-test (Lisboa)", True),
+    ("54.232.22.245", 30502): GeoInfo("BR", "Brazil", "South America", "São Paulo", -23.5505, -46.6333, "qwfwd-mesh-test (São Paulo)", True),
+    ("140.235.125.12", 30503): GeoInfo("US", "United States", "North America", "Miami", 25.7617, -80.1918, "qwfwd-mesh-test (Miami)", True),
+    ("201.23.3.62", 30504): GeoInfo("BR", "Brazil", "South America", "Fortaleza", -3.7319, -38.5267, "qwfwd-mesh-test (Fortaleza)", True),
+}
 
 
 @dataclass
@@ -263,6 +286,12 @@ def collect_once() -> None:
     with graph.lock:
         for addr, geo_info in qw_data_entries:
             graph.geo[addr] = geo_info
+        # our own pinned test proxies use isolated ports (305xx) qw-data
+        # has never heard of - give them known-real coordinates directly so
+        # they still show up on the map even though no third-party source
+        # lists them.
+        for addr, geo_info in PINNED_PROXY_GEO.items():
+            graph.geo.setdefault(addr, geo_info)
 
     # combine both discovery sources: master-reported servers (authoritative
     # for "is it alive right now") plus qw-data proxy entries (may include
@@ -271,10 +300,12 @@ def collect_once() -> None:
     qw_data_proxy_addrs = {addr for addr, info in qw_data_entries if info.is_proxy}
     candidates = {(ip, port) for ip, port in servers if port == PROXY_PORT_HINT}
     candidates |= qw_data_proxy_addrs
+    candidates |= set(PINNED_PROXIES)
 
     print(
         f"[collector] discovered {len(servers)} servers via masters, "
         f"{len(qw_data_entries)} entries via qw-data ({len(qw_data_proxy_addrs)} proxies), "
+        f"{len(PINNED_PROXIES)} pinned test proxies, "
         f"{len(candidates)} total proxy candidates to probe"
     )
 
@@ -527,6 +558,64 @@ class Handler(BaseHTTPRequestHandler):
                         "path_geo": mesh_geo,
                     },
                     "gain_ms": gain_ms,  # positive = mesh route is faster than direct
+                }
+            )
+            return
+
+        if parsed.path == "/top-routes":
+            # The core question the whole tool exists to answer: for THIS
+            # proxy, which other proxies is it fastest to reach, and via
+            # what path (direct or N-hop)? Runs Dijkstra from `from` to
+            # every other known node, keeps the cheapest N results. This
+            # is proxy<->proxy ranking - the "client->proxy->...->proxy"
+            # leg is handled separately by /estimate-route.
+            from_str = qs.get("from", [""])[0]
+            from_addr = parse_addr_param(from_str)
+            if not from_addr:
+                self._send_json({"error": "usage: /top-routes?from=ip:port&limit=10"}, status=400)
+                return
+            try:
+                limit = int(qs.get("limit", ["10"])[0])
+            except ValueError:
+                limit = 10
+            limit = max(1, min(limit, 50))
+
+            with graph.lock:
+                all_nodes = set(graph.edges.keys())
+                for edges in graph.edges.values():
+                    for e in edges:
+                        all_nodes.add((e.to_ip, e.to_port))
+                all_nodes.discard(from_addr)
+
+            results = []
+            for to_addr in all_nodes:
+                r = dijkstra(from_addr, to_addr)
+                if r is None:
+                    continue
+                total_ping, path = r
+                with graph.lock:
+                    to_geo = _geo_to_dict(graph.geo.get(to_addr))
+                results.append(
+                    {
+                        "to": f"{to_addr[0]}:{to_addr[1]}",
+                        "to_geo": to_geo,
+                        "total_ping_ms": total_ping,
+                        "hops": len(path) - 1,
+                        "path": [f"{ip}:{port}" for ip, port in path],
+                    }
+                )
+
+            results.sort(key=lambda r: r["total_ping_ms"])
+
+            with graph.lock:
+                from_geo = _geo_to_dict(graph.geo.get(from_addr))
+
+            self._send_json(
+                {
+                    "from": from_str,
+                    "from_geo": from_geo,
+                    "top_routes": results[:limit],
+                    "total_known_destinations": len(results),
                 }
             )
             return
