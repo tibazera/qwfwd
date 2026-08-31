@@ -216,27 +216,65 @@ aside h2 {
   border: 1px solid var(--accent);
   border-radius: 8px;
 }
-.node-card .addr { font-weight: 700; color: var(--accent); font-size: 13px; word-break: break-all; }
-.node-card .place { color: var(--text-dim); margin-top: 3px; font-size: 11px; }
+.node-card .place { font-family: var(--sans); font-weight: 600; color: var(--accent); font-size: 14px; }
+.node-card .addr { color: var(--text-dim); margin-top: 3px; font-size: 10.5px; word-break: break-all; }
 .node-card .host { color: var(--text); margin-top: 4px; font-size: 11px; }
 
-.route-list { display: flex; flex-direction: column; gap: 5px; }
+.route-list { display: flex; flex-direction: column; gap: 4px; }
 .route-row {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.route-row:hover { border-color: var(--accent); background: var(--accent-glow); }
+.route-row .row-main {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 7px 9px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-family: var(--mono);
-  font-size: 11px;
   gap: 8px;
 }
-.route-row .target { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.route-row .ping { font-weight: 700; padding: 2px 6px; border-radius: 9px; font-size: 10px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.route-row .target {
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 12.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.route-row .hop-count { color: var(--text-dim); font-weight: 400; }
+.route-row .ping { font-weight: 700; padding: 2px 7px; border-radius: 9px; font-size: 10.5px; flex-shrink: 0; font-variant-numeric: tabular-nums; font-family: var(--mono); }
 .ping.good { color: var(--good); background: color-mix(in srgb, var(--good) 15%, transparent); }
 .ping.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 15%, transparent); }
 .ping.bad { color: var(--bad); background: color-mix(in srgb, var(--bad) 15%, transparent); }
+
+/* Technical detail (hop addresses) is collapsed by default - one route
+   card open at a time avoids 10 walls of ip:port text competing for
+   attention before the user has even picked a route. */
+.route-row .row-detail {
+  display: none;
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+}
+.route-row.expanded .row-detail { display: block; }
+.route-row .hop-chain {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  line-height: 1.6;
+  word-break: break-all;
+}
+.route-row .copy-proxy-btn {
+  margin-top: 7px;
+  width: 100%;
+  padding: 6px;
+  font-size: 10.5px;
+}
 
 .gain-banner {
   font-family: var(--mono);
@@ -605,12 +643,11 @@ async function showTopRoutes(addr) {
 function renderTopRoutes(addr, result) {
   const routes = result.top_routes || [];
   let html = `
-    <h2>${liveData.nodes[addr] ? liveData.nodes[addr].city : addr}</h2>
     <div class="node-card">
+      <div class="place">${result.from_geo ? result.from_geo.city + ', ' + result.from_geo.country_code : 'Origem'}</div>
       <div class="addr">${addr}</div>
-      <div class="place">${result.from_geo ? result.from_geo.city + ', ' + result.from_geo.country_code : ''}</div>
     </div>
-    <h2>Top ${routes.length} melhores destinos (de ${result.total_known_destinations} conhecidos)</h2>
+    <h2>Top ${routes.length} destinos <span style="text-transform:none;letter-spacing:0">&middot; ${result.total_known_destinations} conhecidos</span></h2>
   `;
 
   if (!routes.length) {
@@ -639,14 +676,14 @@ function renderTopRoutes(addr, result) {
             return g ? `${addrStr} (${g.city}, ${g.country_code})` : addrStr;
           }).join(' &rarr; ')
         : '';
-      html += `<div class="route-row" data-idx="${idx}" style="cursor:pointer;flex-direction:column;align-items:stretch;${isPinned ? 'border-color:var(--warn)' : ''}">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%">
-          <span class="target">${city}${r.hops > 1 ? ` (${r.hops} hops)` : ''}</span>
+      html += `<div class="route-row" data-idx="${idx}" style="${isPinned ? 'border-color:var(--warn)' : ''}">
+        <div class="row-main">
+          <span class="target">${idx + 1}. ${city}${r.hops > 1 ? ` <span class="hop-count">(${r.hops} hops)</span>` : ''}</span>
           <span class="ping ${pingClass(r.total_ping_ms)}">${r.total_ping_ms.toFixed(0)}ms</span>
         </div>
-        <div style="font-size:9.5px;color:var(--text-dim);margin-top:3px;font-family:var(--mono)">${hopLine || r.to}</div>
-        <div style="display:flex;justify-content:flex-end;margin-top:5px">
-          <button class="btn copy-proxy-btn" data-cmd="${cmdText.replace(/"/g, '&quot;')}" style="width:auto;padding:4px 8px;font-size:9.5px">${proxyChain ? 'copiar cl_proxyaddr' : 'copiar connect'}</button>
+        <div class="row-detail">
+          <div class="hop-chain">${hopLine || r.to}</div>
+          <button class="btn copy-proxy-btn" data-cmd="${cmdText.replace(/"/g, '&quot;')}">${proxyChain ? 'copiar cl_proxyaddr' : 'copiar connect'}</button>
         </div>
       </div>`;
     });
@@ -659,11 +696,21 @@ function renderTopRoutes(addr, result) {
 
   drawTopRoutes(addr, routes);
 
+  // One route expanded at a time - clicking a row reveals its address
+  // chain + copy button instead of showing all 10 at once, and also
+  // highlights that specific path on the map.
   document.querySelectorAll('.route-row[data-idx]').forEach(el => {
     el.addEventListener('click', (ev) => {
       if (ev.target.closest('.copy-proxy-btn')) return; // let the copy button handle its own click
       const idx = parseInt(el.dataset.idx, 10);
-      drawSingleRoute(routes[idx]);
+      const wasExpanded = el.classList.contains('expanded');
+      document.querySelectorAll('.route-row.expanded').forEach(o => o.classList.remove('expanded'));
+      if (!wasExpanded) {
+        el.classList.add('expanded');
+        drawSingleRoute(routes[idx]);
+      } else {
+        drawTopRoutes(addr, routes);
+      }
     });
   });
 
