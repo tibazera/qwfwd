@@ -592,10 +592,13 @@ class Handler(BaseHTTPRequestHandler):
             limit = max(1, min(limit, 50))
 
             with graph.lock:
+                # Only rank actual qwfwd proxies as destinations. pingstatus
+                # replies list every host:port a proxy knows about (its own
+                # game/QTV ports included), so raw edge targets mix in
+                # non-proxy noise - graph.edges.keys() is proxy-only (we
+                # only ever UDP-probe proxy candidates), so intersect
+                # instead of also adding raw edge targets.
                 all_nodes = set(graph.edges.keys())
-                for edges in graph.edges.values():
-                    for e in edges:
-                        all_nodes.add((e.to_ip, e.to_port))
                 all_nodes.discard(from_addr)
 
             results = []
