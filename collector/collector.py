@@ -133,7 +133,14 @@ class GraphState:
                     return
             lst.append(edge)
 
-    def snapshot(self) -> dict:
+    def snapshot(self, top_n: int = 12) -> dict:
+        # /snapshot feeds the map's edge-drawing pass, which only ever
+        # renders the top-8 cheapest edges per node anyway - shipping every
+        # raw edge (600+ candidates x hundreds of edges each) bloated this
+        # to 4.4MB and made it unreliable to fetch on mobile/slow networks.
+        # Cap server-side to the cheapest `top_n` per node. Full-fidelity
+        # routing still goes through /top-routes and /route, which read
+        # self.edges directly (not this method).
         with self.lock:
             return {
                 f"{ip}:{port}": [
@@ -144,7 +151,7 @@ class GraphState:
                         "loss_pct": e.loss_pct,
                         "source": e.source,
                     }
-                    for e in edges
+                    for e in sorted(edges, key=lambda e: e.ping)[:top_n]
                 ]
                 for (ip, port), edges in self.edges.items()
             }
