@@ -269,7 +269,11 @@ def probe_one(addr: tuple[str, int]) -> None:
                         peer_addr,
                         Edge(hop.ip, hop.port, float(hop.ping), hop.jitter, hop.loss_pct, source="meshstatus"),
                     )
-            return  # mesh-capable node already gave us richer data, no need for pingstatus too
+            if mesh_blocks:
+                return  # mesh-capable node gave us richer data, no need for pingstatus too
+            # mesh-capable but its peer cache is still empty (daemon just
+            # started, hasn't accumulated mesh peers yet) - fall through to
+            # pingstatus so the node still gets edges in the meantime.
 
         # fallback: legacy pingstatus, ping-only, no jitter/loss
         entries = probe_pingstatus(sock, addr)
