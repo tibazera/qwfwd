@@ -599,6 +599,7 @@ class Handler(BaseHTTPRequestHandler):
                 total_ping, path = r
                 with graph.lock:
                     to_geo = _geo_to_dict(graph.geo.get(to_addr))
+                    path_geo = [_geo_to_dict(graph.geo.get(a)) for a in path]
                 results.append(
                     {
                         "to": f"{to_addr[0]}:{to_addr[1]}",
@@ -606,6 +607,7 @@ class Handler(BaseHTTPRequestHandler):
                         "total_ping_ms": total_ping,
                         "hops": len(path) - 1,
                         "path": [f"{ip}:{port}" for ip, port in path],
+                        "path_geo": path_geo,
                     }
                 )
 
