@@ -528,21 +528,10 @@ function renderMap(data) {
   nodesGroup.selectAll('*').remove();
   nodeElements = {};
 
-  for (const edge of data.edges) {
-    const a = data.nodes[edge.from];
-    const b = data.nodes[edge.to];
-    if (!a || !b) continue;
-    const p1 = projection([a.lon, a.lat]);
-    const p2 = projection([b.lon, b.lat]);
-    if (!p1 || !p2) continue;
-    edgesGroup.append('line')
-      .attr('class', 'edge')
-      .attr('x1', p1[0]).attr('y1', p1[1])
-      .attr('x2', p2[0]).attr('y2', p2[1])
-      .attr('stroke', pingColor(edge.ping))
-      .attr('stroke-width', edge.ping < 40 ? 1.1 : 0.7)
-      .attr('opacity', 0.5);
-  }
+  // No background edges drawn here on purpose: showing every node's top-8
+  // links at once turned the map into a solid mesh of lines regardless of
+  // selection. Connections only appear once a proxy is clicked, scoped to
+  // that proxy's top-10 ranked destinations (drawTopRoutes/drawSingleRoute).
 
   let i = 0;
   for (const [addr, info] of Object.entries(data.nodes)) {
