@@ -573,6 +573,58 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if parsed.path == "/routes-to":
+            # Batch version of /route for a client picking an entry point:
+            # given a destination and a list of candidate entry proxies
+            # (typically ones the client already measured a local RTT to),
+            # return one Dijkstra route per entry so the caller can add its
+            # own client->entry cost and pick the cheapest total in one
+            # request, instead of firing N sequential /route calls per
+            # connection attempt.
+            to_str = qs.get("to", [""])[0]
+            entries_str = qs.get("entries", [""])[0]
+            to_addr = parse_addr_param(to_str)
+            if not to_addr or not entries_str:
+                self._send_json(
+                    {"error": "usage: /routes-to?to=ip:port&entries=ip1:port1,ip2:port2,..."},
+                    status=400,
+                )
+                return
+
+            entry_strs = [e for e in entries_str.split(",") if e]
+            if len(entry_strs) > 50:
+                self._send_json({"error": "too many entries, max 50"}, status=400)
+                return
+
+            results = []
+            for entry_str in entry_strs:
+                entry_addr = parse_addr_param(entry_str)
+                if not entry_addr:
+                    results.append({"entry": entry_str, "known": False})
+                    continue
+                r = dijkstra(entry_addr, to_addr)
+                if r is None:
+                    results.append({"entry": entry_str, "known": False})
+                    continue
+                total_ping, path = r
+                with graph.lock:
+                    path_geo = [_geo_to_dict(graph.geo.get(a)) for a in path]
+                results.append(
+                    {
+                        "entry": entry_str,
+                        "known": True,
+                        "total_ping_ms": total_ping,
+                        "hops": len(path) - 1,
+                        "path": [f"{ip}:{port}" for ip, port in path],
+                        "path_geo": path_geo,
+                    }
+                )
+
+            results.sort(key=lambda r: r["total_ping_ms"] if r["known"] else float("inf"))
+
+            self._send_json({"to": to_str, "routes": results})
+            return
+
         if parsed.path == "/top-routes":
             # The core question the whole tool exists to answer: for THIS
             # proxy, which other proxies is it fastest to reach, and via
@@ -714,7 +766,7 @@ def main() -> None:
     server = ThreadingHTTPServer(("0.0.0.0", 8730), Handler)
     print(
         "[collector] serving on :8730 "
-        "(/route, /estimate-route, /compare, /client-ping, /snapshot, /geo, /health)"
+        "(/route, /routes-to, /top-routes, /estimate-route, /compare, /client-ping, /snapshot, /geo, /health)"
     )
     server.serve_forever()
 
