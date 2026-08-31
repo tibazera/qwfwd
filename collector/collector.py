@@ -10,15 +10,21 @@ naturalmente com a malha mista (nós patcheados vs os ~280 legados que só
 falam pingstatus), e mantém o qwfwd "burro" e simples.
 
 Fluxo:
-  1. Descobre servidores via masters QW públicos (protocolo nativo).
+  1. Descobre servidores via masters QW públicos (protocolo nativo) E via
+     o servers.json mantido por terceiros em github.com/vikpe/qw-data
+     (usado pelo próprio tools.quake.world/servers/) - essa segunda fonte
+     também traz coordenadas geográficas reais (geo.coordinates) por
+     servidor, o que resolve por completo a necessidade de geolocalização
+     própria de IP para o mapa mundial.
   2. Para cada um que responde na porta 30000 (convenção, não garantia):
      tenta meshstatus primeiro (dados ricos: ping+jitter+loss, várias
      arestas de uma vez). Se não responder, tenta pingstatus (legado,
      só ping direto, sem jitter/loss).
   3. Monta o grafo dirigido (arestas com origem explícita, nunca assume
      simetria — RTT pode divergir por direção).
-  4. Expõe /route?from=X&to=Y calculando Dijkstra sob demanda, e
-     /snapshot com o grafo bruto para debug/mapa.
+  4. Expõe /route?from=X&to=Y calculando Dijkstra sob demanda,
+     /snapshot com o grafo bruto para debug/mapa, e /geo com as
+     coordenadas conhecidas por endereço.
 
 Isso é uma primeira versão funcional, não um serviço de produção 24/7
 ainda — roda um ciclo de coleta, serve o resultado via HTTP enquanto
@@ -31,6 +37,8 @@ import json
 import socket
 import threading
 import time
+import urllib.error
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -43,6 +51,13 @@ MASTERS = [
     ("qwmaster.fodquake.net", 27000),
     ("master.quakeservers.net", 27000),
 ]
+
+# maintained by a third party (github.com/vikpe/qw-data), also the data
+# source behind tools.quake.world/servers/ - includes geo.coordinates per
+# server, which is otherwise unavailable from the master/pingstatus
+# protocols themselves
+QW_DATA_SERVERS_URL = "https://raw.githubusercontent.com/vikpe/qw-data/main/servers.json"
+QW_DATA_TIMEOUT = 10.0
 
 PROXY_PORT_HINT = 30000  # convention, not guaranteed - we still verify via protocol response
 DISCOVERY_TIMEOUT = 5.0
@@ -63,11 +78,24 @@ class Edge:
 
 
 @dataclass
+class GeoInfo:
+    country_code: str
+    country: str
+    region: str
+    city: str
+    lat: float
+    lon: float
+    hostname: str
+    is_proxy: bool
+
+
+@dataclass
 class GraphState:
     # adjacency: (ip,port) -> list[Edge]. Directed - an edge measured by
     # node A about node B says nothing about B's measurement of A.
     edges: dict[tuple[str, int], list[Edge]] = field(default_factory=dict)
     mesh_capable: set[tuple[str, int]] = field(default_factory=set)
+    geo: dict[tuple[str, int], GeoInfo] = field(default_factory=dict)
     last_collected_at: float = 0.0
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -123,6 +151,60 @@ def discover_servers() -> list[tuple[str, int]]:
     return sorted(seen)
 
 
+def fetch_qw_data_servers() -> list[tuple[tuple[str, int], GeoInfo]]:
+    """Fetches the third-party servers.json (vikpe/qw-data, also used by
+    tools.quake.world/servers/). Used as (a) a second discovery source and
+    (b) the ONLY source of real geographic coordinates - the QW protocol
+    itself has no notion of geolocation. Best-effort: network failure here
+    must never break the primary master-based discovery path."""
+    results: list[tuple[tuple[str, int], GeoInfo]] = []
+    try:
+        req = urllib.request.Request(QW_DATA_SERVERS_URL, headers={"User-Agent": "qwfwd-mesh-collector"})
+        with urllib.request.urlopen(req, timeout=QW_DATA_TIMEOUT) as resp:
+            data = json.loads(resp.read())
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as e:
+        print(f"[collector] qw-data fetch failed (non-fatal, continuing with master-only discovery): {e}")
+        return results
+
+    for entry in data:
+        address = entry.get("address", "")
+        if ":" not in address:
+            continue
+        ip, _, port_str = address.rpartition(":")
+        try:
+            port = int(port_str)
+        except ValueError:
+            continue
+
+        geo = entry.get("geo") or {}
+        coords = geo.get("coordinates")
+        if not coords or len(coords) != 2:
+            continue  # no point keeping a geo entry with no coordinates
+
+        version = str(entry.get("version", ""))
+        settings = entry.get("settings", {}) or {}
+        hostname = str(settings.get("hostname", ""))
+        is_proxy = "qwfwd" in version.lower() or port == PROXY_PORT_HINT
+
+        results.append(
+            (
+                (ip, port),
+                GeoInfo(
+                    country_code=str(geo.get("cc", "")),
+                    country=str(geo.get("country", "")),
+                    region=str(geo.get("region", "")),
+                    city=str(geo.get("city", "")),
+                    lat=float(coords[0]),
+                    lon=float(coords[1]),
+                    hostname=hostname,
+                    is_proxy=is_proxy,
+                ),
+            )
+        )
+
+    return results
+
+
 def probe_meshstatus(sock: socket.socket, addr: tuple[str, int]) -> list[protocol.MeshPeerBlock] | None:
     """Full meshstatus fetch with pagination. Returns None if the node
     never answers meshstatus at all (not mesh-capable / unreachable);
@@ -176,8 +258,25 @@ def probe_one(addr: tuple[str, int]) -> None:
 
 def collect_once() -> None:
     servers = discover_servers()
-    candidates = [(ip, port) for ip, port in servers if port == PROXY_PORT_HINT]
-    print(f"[collector] discovered {len(servers)} servers, {len(candidates)} proxy candidates (port {PROXY_PORT_HINT})")
+
+    qw_data_entries = fetch_qw_data_servers()
+    with graph.lock:
+        for addr, geo_info in qw_data_entries:
+            graph.geo[addr] = geo_info
+
+    # combine both discovery sources: master-reported servers (authoritative
+    # for "is it alive right now") plus qw-data proxy entries (may include
+    # proxies momentarily missed by a master query, or proxies that opted
+    # out of master registration but still answer the protocol directly)
+    qw_data_proxy_addrs = {addr for addr, info in qw_data_entries if info.is_proxy}
+    candidates = {(ip, port) for ip, port in servers if port == PROXY_PORT_HINT}
+    candidates |= qw_data_proxy_addrs
+
+    print(
+        f"[collector] discovered {len(servers)} servers via masters, "
+        f"{len(qw_data_entries)} entries via qw-data ({len(qw_data_proxy_addrs)} proxies), "
+        f"{len(candidates)} total proxy candidates to probe"
+    )
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         futures = [pool.submit(probe_one, addr) for addr in candidates]
@@ -186,7 +285,10 @@ def collect_once() -> None:
 
     graph.last_collected_at = time.time()
     total_edges = sum(len(v) for v in graph.edges.values())
-    print(f"[collector] cycle done: {len(graph.edges)} nodes, {total_edges} edges, {len(graph.mesh_capable)} mesh-capable")
+    print(
+        f"[collector] cycle done: {len(graph.edges)} nodes, {total_edges} edges, "
+        f"{len(graph.mesh_capable)} mesh-capable, {len(graph.geo)} with known coordinates"
+    )
 
 
 def recollect_loop() -> None:
@@ -291,6 +393,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
             total_ping, path = result
+            with graph.lock:
+                path_geo = [_geo_to_dict(graph.geo.get(addr)) for addr in path]
             self._send_json(
                 {
                     "from": from_str,
@@ -298,8 +402,16 @@ class Handler(BaseHTTPRequestHandler):
                     "total_ping_ms": total_ping,
                     "hops": len(path) - 1,
                     "path": [f"{ip}:{port}" for ip, port in path],
+                    "path_geo": path_geo,  # same length/order as "path"; entries are null where unknown
                 }
             )
+            return
+
+        if parsed.path == "/geo":
+            with graph.lock:
+                self._send_json(
+                    {f"{ip}:{port}": _geo_to_dict(info) for (ip, port), info in graph.geo.items()}
+                )
             return
 
         if parsed.path == "/health":
@@ -307,6 +419,21 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         self._send_json({"error": "not found"}, status=404)
+
+
+def _geo_to_dict(info: GeoInfo | None) -> dict | None:
+    if info is None:
+        return None
+    return {
+        "country_code": info.country_code,
+        "country": info.country,
+        "region": info.region,
+        "city": info.city,
+        "lat": info.lat,
+        "lon": info.lon,
+        "hostname": info.hostname,
+        "is_proxy": info.is_proxy,
+    }
 
 
 def main() -> None:
@@ -317,7 +444,7 @@ def main() -> None:
     recollect_thread.start()
 
     server = ThreadingHTTPServer(("0.0.0.0", 8730), Handler)
-    print("[collector] serving on :8730 (/route?from=ip:port&to=ip:port, /snapshot, /health)")
+    print("[collector] serving on :8730 (/route?from=ip:port&to=ip:port, /snapshot, /geo, /health)")
     server.serve_forever()
 
 
