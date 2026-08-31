@@ -468,6 +468,69 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if parsed.path == "/compare":
+            # For the map UI: draw a straight "direct" line vs a "via mesh"
+            # line for the same (from, to) pair, with real numbers for
+            # both. "Direct" here is the real measured edge from->to (no
+            # intermediate hop) if one exists in the graph - not a browser
+            # measurement, an actual pingstatus/meshstatus sample between
+            # those two nodes. "Via mesh" is the cheapest multi-hop path
+            # (Dijkstra), which may legitimately equal the direct edge
+            # (0 hops) when direct already is the best route - the UI
+            # should make that obvious rather than pretend mesh always wins.
+            from_str = qs.get("from", [""])[0]
+            to_str = qs.get("to", [""])[0]
+            from_addr = parse_addr_param(from_str)
+            to_addr = parse_addr_param(to_str)
+            if not from_addr or not to_addr:
+                self._send_json({"error": "usage: /compare?from=ip:port&to=ip:port"}, status=400)
+                return
+
+            with graph.lock:
+                direct_edges = graph.edges.get(from_addr, [])
+                direct_edge = next((e for e in direct_edges if (e.to_ip, e.to_port) == to_addr), None)
+
+            direct_ping = direct_edge.ping if direct_edge else None
+
+            mesh_result = dijkstra(from_addr, to_addr)
+            if mesh_result is None:
+                mesh_ping, mesh_path, mesh_geo = None, None, None
+            else:
+                mesh_ping, path = mesh_result
+                with graph.lock:
+                    mesh_geo = [_geo_to_dict(graph.geo.get(addr)) for addr in path]
+                mesh_path = [f"{ip}:{port}" for ip, port in path]
+
+            with graph.lock:
+                from_geo = _geo_to_dict(graph.geo.get(from_addr))
+                to_geo = _geo_to_dict(graph.geo.get(to_addr))
+
+            gain_ms = None
+            if direct_ping is not None and mesh_ping is not None:
+                gain_ms = direct_ping - mesh_ping
+
+            self._send_json(
+                {
+                    "from": from_str,
+                    "to": to_str,
+                    "from_geo": from_geo,
+                    "to_geo": to_geo,
+                    "direct": {
+                        "known": direct_edge is not None,
+                        "ping_ms": direct_ping,
+                    },
+                    "via_mesh": {
+                        "known": mesh_result is not None,
+                        "ping_ms": mesh_ping,
+                        "hops": (len(mesh_path) - 1) if mesh_path else None,
+                        "path": mesh_path,
+                        "path_geo": mesh_geo,
+                    },
+                    "gain_ms": gain_ms,  # positive = mesh route is faster than direct
+                }
+            )
+            return
+
         if parsed.path == "/snapshot":
             self._send_json(
                 {
@@ -546,7 +609,7 @@ def main() -> None:
     server = ThreadingHTTPServer(("0.0.0.0", 8730), Handler)
     print(
         "[collector] serving on :8730 "
-        "(/route, /estimate-route, /client-ping, /snapshot, /geo, /health)"
+        "(/route, /estimate-route, /compare, /client-ping, /snapshot, /geo, /health)"
     )
     server.serve_forever()
 
