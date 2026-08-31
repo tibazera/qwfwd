@@ -103,6 +103,17 @@ typedef struct server
 	struct server			*next;			// next server in linked list
 } server_t;
 
+// explicit byte copy of a raw IPv4 address into a machine int for
+// MSG_WriteLong - avoids the strict-aliasing UB of casting a
+// struct in_addr* to int* (the original SVC_QRY_PingStatus code does this
+// cast; new mesh code uses this helper instead of repeating the hazard)
+static int QRY_IPv4AsInt(const struct in_addr *addr)
+{
+	int value;
+	memcpy(&value, addr, sizeof(value));
+	return value;
+}
+
 // single server_filter struct.
 // used by masters_filter_servers.
 typedef struct server_filter
@@ -1052,18 +1063,6 @@ static void QRY_Cmd_SvList_f(void)
 // answer with a valid mesh reply?), not a version-string guess - a plain QW
 // server or mvdsv simply won't understand "pingstatus" and will not reply
 // in our expected format, so it is never misclassified as mesh-capable.
-
-// explicit byte copy of a raw IPv4 address into a machine int for
-// MSG_WriteLong - avoids the strict-aliasing UB of casting a
-// struct in_addr* to int* (the original SVC_QRY_PingStatus code does this
-// cast; new mesh code uses this helper instead of repeating the hazard)
-static int QRY_IPv4AsInt(const struct in_addr *addr)
-{
-	int value;
-	memcpy(&value, addr, sizeof(value));
-	return value;
-}
-
 // generates a nonzero 32-bit nonce; 0 is reserved for "no outstanding probe"
 static unsigned int QRY_Mesh_NewNonce(void)
 {
