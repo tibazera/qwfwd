@@ -614,9 +614,17 @@ function renderTopRoutes(addr, result) {
     routes.forEach((r, idx) => {
       const city = r.to_geo ? `${r.to_geo.city}, ${r.to_geo.country_code}` : r.to;
       const isPinned = PINNED_PROXIES.has(r.to);
-      html += `<div class="route-row" data-idx="${idx}" style="cursor:pointer;${isPinned ? 'border-color:var(--warn)' : ''}">
-        <span class="target">${city}${r.hops > 1 ? ` (${r.hops} hops)` : ''}</span>
-        <span class="ping ${pingClass(r.total_ping_ms)}">${r.total_ping_ms.toFixed(0)}ms</span>
+      // Intermediate hops (skip origin and final destination) so multi-hop
+      // routes show WHICH proxies are relaying, not just the hop count.
+      const hopNames = r.hops > 1 && r.path_geo
+        ? r.path_geo.slice(1, -1).map(g => g ? `${g.city}, ${g.country_code}` : '?').join(' &rarr; ')
+        : '';
+      html += `<div class="route-row" data-idx="${idx}" style="cursor:pointer;flex-direction:column;align-items:stretch;${isPinned ? 'border-color:var(--warn)' : ''}">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%">
+          <span class="target">${city}${r.hops > 1 ? ` (${r.hops} hops)` : ''}</span>
+          <span class="ping ${pingClass(r.total_ping_ms)}">${r.total_ping_ms.toFixed(0)}ms</span>
+        </div>
+        ${hopNames ? `<div style="font-size:9.5px;color:var(--text-dim);margin-top:3px">via ${hopNames}</div>` : ''}
       </div>`;
     });
     html += `</div>`;
