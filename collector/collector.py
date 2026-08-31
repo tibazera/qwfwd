@@ -622,6 +622,33 @@ class Handler(BaseHTTPRequestHandler):
 
             results.sort(key=lambda r: r["total_ping_ms"] if r["known"] else float("inf"))
 
+            if qs.get("format", [""])[0] == "plain":
+                # C clients (unezQuake) have no JSON parser in the build -
+                # emit the one thing the caller actually needs to act on
+                # (entry|total_ping_ms|hops|proxylist) as newline-separated
+                # plain text, sorted best-first. proxylist is pre-formatted
+                # in cl_proxyaddr's own "@"-joined syntax (intermediate
+                # hops only, final destination excluded - same convention
+                # as EX_browser_pathfind.c's SB_PingTree_GetProxyString) so
+                # the client can Cvar_Set it directly with no parsing.
+                lines = []
+                for r in results:
+                    if not r["known"]:
+                        lines.append(f"{r['entry']}|-1|0|")
+                        continue
+                    proxylist = "@".join(r["path"][:-1])  # drop final hop (the destination itself)
+                    lines.append(f"{r['entry']}|{r['total_ping_ms']:.0f}|{r['hops']}|{proxylist}")
+                body = "\n".join(lines) + "\n"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Cache-Control", "no-store")
+                encoded = body.encode("utf-8")
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+                return
+
             self._send_json({"to": to_str, "routes": results})
             return
 
