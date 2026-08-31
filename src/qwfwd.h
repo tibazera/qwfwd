@@ -443,6 +443,36 @@ void				SVC_QRY_ParseMasterReply(void);
 void				SVC_QRY_PingStatus(void);
 
 //
+// mesh (query.c) - P2P discovery between qwfwd instances
+//
+
+// wire marker for mesh replies: 0xFF 0xFF 0xFF 0xFF 'Q' 'M' <type> <nonce:4>
+// distinct from A2C_PRINT ('n') so it can never collide with any existing
+// out-of-band text reply (status errors, master replies, plain pingstatus
+// text query, etc). 'Q','M' = "Query Mesh".
+#define MESH_MAGIC0 'Q'
+#define MESH_MAGIC1 'M'
+
+#define MESH_MSG_PINGSTATUS_REPLY	1	// reply to our own "pingstatus" probe
+#define MESH_MSG_MESHSTATUS_REPLY	2	// reply to "meshstatus" collector query
+
+// hard cap on hop2 entries kept per mesh peer - bounds memory
+// (MAX_SERVERS peers * MESH_MAX_HOP2_PER_PEER entries * sizeof(hop2_entry_t))
+#define MESH_MAX_HOP2_PER_PEER 128
+
+// one measured edge: <peer> -> <addr> costs <ping> ms, as reported by <peer>
+typedef struct hop2_entry_s
+{
+	struct sockaddr_in	addr;	// target address (not the peer itself)
+	int					ping;	// ping in ms, as reported by the peer
+} hop2_entry_t;
+
+qbool				QRY_Mesh_IsMeshReply(void);
+void				QRY_Mesh_HandleReply(void);
+void				SVC_QRY_MeshProbe(void);
+void				SVC_QRY_MeshStatus(void);
+
+//
 // huff.c
 //
 

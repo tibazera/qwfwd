@@ -425,6 +425,14 @@ qbool SV_ConnectionlessPacket(void)
 	{
 		SVC_QRY_ParseMasterReply();
 	}
+	else if (QRY_Mesh_IsMeshReply())
+	{
+		// binary mesh reply (from meshprobe) - MUST be intercepted here,
+		// before MSG_ReadString()/Cmd_TokenizeString() below, which treat
+		// the payload as a C string and would silently mangle/drop binary
+		// data at the first embedded zero byte
+		QRY_Mesh_HandleReply();
+	}
 	else
 	{
 		MSG_ReadLong ();		// skip the -1 marker
@@ -455,6 +463,10 @@ qbool SV_ConnectionlessPacket(void)
 			SVC_Ping();
 		else if (!strcmp(c, "pingstatus"))
 			SVC_QRY_PingStatus();
+		else if (!strcmp(c, "meshprobe"))
+			SVC_QRY_MeshProbe();
+		else if (!strcmp(c, "meshstatus"))
+			SVC_QRY_MeshStatus();
 		else if (!strcmp(c,"connect"))
 			SVC_DirectConnect();
 		else if (!strcmp(c,"getchallenge"))

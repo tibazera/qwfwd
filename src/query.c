@@ -31,6 +31,17 @@ static cvar_t *masters_heartbeat;
 static cvar_t *masters_list;
 static cvar_t *masters_filter_servers;
 
+static cvar_t *mesh_enable;
+static cvar_t *mesh_query_interval;	// seconds between re-probes of a confirmed mesh peer
+static cvar_t *mesh_probe_interval;	// seconds between (re)probe attempts of an unclassified server
+
+// "meshprobe" is a dedicated query, separate from "pingstatus", so the
+// existing pingstatus wire format (consumed today by ezquake's ping tree,
+// EX_browser_pathfind.c) never changes shape. Only a qwfwd that understands
+// mesh will ever reply to this command.
+#define MESH_PROBE_CMD "meshprobe"
+#define MESH_PENDING_TIMEOUT 5.0	// seconds - drop an outstanding probe if no reply
+
 // master state enum
 typedef enum
 {
@@ -68,6 +79,17 @@ typedef struct server
 	double					ping_reply_at;	// last time when we receive ping reply from server,
 											// so we can guess is server dead etc
 	int						ping;			// ping to that server in milliseconds
+
+	// mesh (P2P discovery between qwfwd instances) state
+	qbool					mesh_probed;		// we've sent at least one pingstatus probe
+	qbool					is_mesh;			// confirmed qwfwd: replied with a valid mesh reply
+	double					mesh_probe_sent_at;	// last time we sent a probe to this server
+	double					mesh_reply_at;		// last time we got a confirmed mesh reply
+	unsigned int			mesh_nonce;			// nonce of the currently outstanding probe, 0 = none
+
+	hop2_entry_t			*hop2;			// dynamically allocated, NULL if not a mesh peer
+	int						hop2_count;
+	int						hop2_capacity;	// allocated capacity (capacity doubling, not per-entry realloc)
 
 	struct server			*next;			// next server in linked list
 } server_t;
@@ -436,6 +458,9 @@ static void QRY_SV_free(server_t *sv, qbool unlink)
 	}
 
 	// free all data related to server
+	if (sv->hop2)
+		Sys_free(sv->hop2);
+
 	Sys_free(sv);
 
 	sv_count--;
@@ -549,6 +574,189 @@ void SVC_QRY_PingStatus(void)
 	}
 
 	// send the datagram
+	NET_SendPacket(net_from_socket, buf.cursize, buf.data, &net_from);
+}
+
+//==============================================
+// mesh wire format:
+//   probe query  (text, via normal dispatch): "meshprobe <nonce>"
+//   probe reply  (binary): 0xFF*4 'Q' 'M' <type=1><nonce:4 LE> + N*(int32 ip + int16 port + int16 ping)
+//   meshstatus reply (binary, collector-facing): 0xFF*4 'Q' 'M' <type=2><reserved:4> +
+//       repeated: (int32 peer_ip + int16 peer_port + int16 age_seconds + int16 count) + count*(int32 ip + int16 port + int16 ping)
+//
+// Both replies are rate-limited per source address to avoid this becoming a
+// UDP amplification reflector: a forged-source flood of probe/meshstatus
+// queries gets at most one reply per address per RATE_LIMIT_WINDOW.
+
+#define MESH_RATE_LIMIT_WINDOW 1.0		// seconds
+#define MESH_RATE_LIMIT_TRACK 64		// small ring of recently answered addresses
+
+typedef struct mesh_rate_entry_s
+{
+	struct sockaddr_in	addr;
+	double				last_reply_at;
+} mesh_rate_entry_t;
+
+static mesh_rate_entry_t mesh_rate_track[MESH_RATE_LIMIT_TRACK];
+static int mesh_rate_track_next;
+
+// true if we already replied to this address recently (and records this
+// reply for future calls) - a crude per-source token bucket, good enough to
+// kill a naive amplification flood without adding real state/memory growth
+static qbool QRY_Mesh_RateLimited(const struct sockaddr_in *from)
+{
+	double current = Sys_DoubleTime();
+	int i;
+
+	for (i = 0; i < MESH_RATE_LIMIT_TRACK; i++)
+	{
+		if (mesh_rate_track[i].last_reply_at == 0)
+			continue;
+
+		if (NET_CompareBaseAddress((struct sockaddr_in *) from, &mesh_rate_track[i].addr))
+		{
+			if (current - mesh_rate_track[i].last_reply_at < MESH_RATE_LIMIT_WINDOW)
+				return true;
+
+			mesh_rate_track[i].last_reply_at = current;
+			return false;
+		}
+	}
+
+	// not tracked yet, take the next ring slot
+	mesh_rate_track[mesh_rate_track_next].addr = *from;
+	mesh_rate_track[mesh_rate_track_next].last_reply_at = current;
+	mesh_rate_track_next = (mesh_rate_track_next + 1) % MESH_RATE_LIMIT_TRACK;
+
+	return false;
+}
+
+// answers a "meshprobe <nonce>" query. This is what makes protocol-based
+// mesh detection possible: only a qwfwd binary running this code replies in
+// this exact format, so QRY_Mesh_HandleReply() on the caller's side treating
+// "got a valid reply" as "this is a qwfwd" is sound, not a guess.
+void SVC_QRY_MeshProbe(void)
+{
+	char				*nonce_str;
+	unsigned int		nonce;
+	static sizebuf_t	buf;
+	static byte			buf_data[MSG_BUF_SIZE];
+	server_t			*sv;
+	int					entries_written = 0;
+
+	if (!mesh_enable->integer || !masters_query->integer)
+		return; // mesh disabled or we don't keep an authoritative server list to report
+
+	if (QRY_Mesh_RateLimited(&net_from))
+		return;
+
+	nonce_str = Cmd_Argv(1);
+	if (!nonce_str[0])
+		return; // malformed query, no nonce to echo back
+
+	nonce = (unsigned int) strtoul(nonce_str, NULL, 10);
+	if (!nonce)
+		return;
+
+	SZ_InitEx(&buf, buf_data, sizeof(buf_data), true);
+
+	MSG_WriteLong(&buf, -1);
+	MSG_WriteByte(&buf, (byte) MESH_MAGIC0);
+	MSG_WriteByte(&buf, (byte) MESH_MAGIC1);
+	MSG_WriteByte(&buf, MESH_MSG_PINGSTATUS_REPLY);
+	MSG_WriteLong(&buf, (int) nonce);
+
+	// report OUR OWN directly-measured pings to known servers - this is the
+	// 1-hop data this peer contributes to whoever is probing us
+	for (sv = servers; sv && !buf.overflowed; sv = sv->next)
+	{
+		if (sv->ping < 0 || sv->ping >= 0xFFFF)
+			continue; // unreachable/unmeasured, do not report
+
+		if (entries_written >= MESH_MAX_HOP2_PER_PEER)
+			break; // cap response size, avoid MTU-busting a single datagram
+
+		MSG_WriteLong(&buf, *(int *) &sv->addr.sin_addr);
+		MSG_WriteShort(&buf, (short) ntohs(sv->addr.sin_port));
+		MSG_WriteShort(&buf, (short) sv->ping);
+		entries_written++;
+	}
+
+	if (buf.overflowed)
+	{
+		Sys_Printf("SVC_QRY_MeshProbe: overflow, truncated response\n");
+		return;
+	}
+
+	NET_SendPacket(net_from_socket, buf.cursize, buf.data, &net_from);
+}
+
+// answers "meshstatus": exposes the hop2 cache (pings reported by OUR mesh
+// peers about THEIR neighbours) to an external collector building the
+// worldwide route map. Paginated by peer so a single reply never exceeds
+// MSG_BUF_SIZE / MAX_MSGLEN regardless of mesh size.
+void SVC_QRY_MeshStatus(void)
+{
+	static sizebuf_t	buf;
+	static byte			buf_data[MSG_BUF_SIZE];
+	server_t			*sv;
+	double				current;
+
+	if (!mesh_enable->integer)
+		return;
+
+	if (QRY_Mesh_RateLimited(&net_from))
+		return;
+
+	current = Sys_DoubleTime();
+
+	SZ_InitEx(&buf, buf_data, sizeof(buf_data), true);
+
+	MSG_WriteLong(&buf, -1);
+	MSG_WriteByte(&buf, (byte) MESH_MAGIC0);
+	MSG_WriteByte(&buf, (byte) MESH_MAGIC1);
+	MSG_WriteByte(&buf, MESH_MSG_MESHSTATUS_REPLY);
+	MSG_WriteLong(&buf, 0); // reserved
+
+	for (sv = servers; sv; sv = sv->next)
+	{
+		int i, age, count;
+
+		if (!sv->is_mesh || sv->hop2_count <= 0)
+			continue;
+
+		count = sv->hop2_count;
+		if (count > MESH_MAX_HOP2_PER_PEER)
+			count = MESH_MAX_HOP2_PER_PEER;
+
+		age = (int) (current - sv->mesh_reply_at);
+		if (age < 0) age = 0;
+		if (age > 0x7FFF) age = 0x7FFF;
+
+		// bail out BEFORE starting a peer block we can't finish whole -
+		// a collector must never see a truncated peer's neighbour list
+		if (buf.cursize + 10 + count * 8 > (int) sizeof(buf_data) - 32)
+			break;
+
+		MSG_WriteLong(&buf, *(int *) &sv->addr.sin_addr);
+		MSG_WriteShort(&buf, (short) ntohs(sv->addr.sin_port));
+		MSG_WriteShort(&buf, (short) age);
+		MSG_WriteShort(&buf, (short) count);
+
+		for (i = 0; i < count; i++)
+		{
+			MSG_WriteLong(&buf, *(int *) &sv->hop2[i].addr.sin_addr);
+			MSG_WriteShort(&buf, (short) ntohs(sv->hop2[i].addr.sin_port));
+			MSG_WriteShort(&buf, (short) sv->hop2[i].ping);
+		}
+	}
+
+	if (buf.overflowed)
+	{
+		Sys_Printf("SVC_QRY_MeshStatus: overflow\n");
+		return;
+	}
+
 	NET_SendPacket(net_from_socket, buf.cursize, buf.data, &net_from);
 }
 
@@ -680,6 +888,227 @@ static void QRY_Cmd_SvList_f(void)
 }
 
 //==============================================
+// mesh: discover other qwfwd instances among known servers, probe them with
+// the existing "pingstatus" query, and cache the 2-hop ping data they report
+// for their own neighbours. Detection is protocol-based (does the target
+// answer with a valid mesh reply?), not a version-string guess - a plain QW
+// server or mvdsv simply won't understand "pingstatus" and will not reply
+// in our expected format, so it is never misclassified as mesh-capable.
+
+// generates a nonzero 32-bit nonce; 0 is reserved for "no outstanding probe"
+static unsigned int QRY_Mesh_NewNonce(void)
+{
+	unsigned int nonce;
+
+	do
+	{
+		nonce = ((unsigned int) rand() << 16) ^ (unsigned int) rand();
+	} while (!nonce);
+
+	return nonce;
+}
+
+// capacity-doubling append, avoids a realloc() per received entry which
+// would fragment the heap on a long-running daemon
+static void QRY_Mesh_StoreHop2(server_t *sv, struct sockaddr_in *addr, int ping)
+{
+	int i;
+
+	if (!sv || ping < 0)
+		return;
+
+	// update existing entry for the same target instead of duplicating
+	for (i = 0; i < sv->hop2_count; i++)
+	{
+		if (memcmp(&sv->hop2[i].addr, addr, sizeof(struct sockaddr_in)) == 0)
+		{
+			sv->hop2[i].ping = ping;
+			return;
+		}
+	}
+
+	if (sv->hop2_count >= MESH_MAX_HOP2_PER_PEER)
+		return; // hard cap, silently drop extra entries from a chatty/malicious peer
+
+	if (sv->hop2_count >= sv->hop2_capacity)
+	{
+		int new_capacity = sv->hop2_capacity ? sv->hop2_capacity * 2 : 16;
+		hop2_entry_t *grown;
+
+		if (new_capacity > MESH_MAX_HOP2_PER_PEER)
+			new_capacity = MESH_MAX_HOP2_PER_PEER;
+
+		grown = realloc(sv->hop2, new_capacity * sizeof(hop2_entry_t));
+		if (!grown)
+			return; // allocation failed, drop this entry, keep what we already have
+
+		sv->hop2 = grown;
+		sv->hop2_capacity = new_capacity;
+	}
+
+	sv->hop2[sv->hop2_count].addr = *addr;
+	sv->hop2[sv->hop2_count].ping = ping;
+	sv->hop2_count++;
+}
+
+// probe servers we haven't classified yet, one probe per call (round-robin,
+// throttled), same shape as QRY_SV_PingServers - never blocks the main loop
+static void QRY_Mesh_QueryPeers(void)
+{
+	static int		idx;
+	double			current = Sys_DoubleTime();
+	server_t		*sv;
+	int				count, i;
+
+	if (!mesh_enable->integer || !masters_query->integer)
+		return;
+
+	if (!servers)
+		return;
+
+	count = QRY_SV_Count();
+	if (count <= 0)
+		return;
+
+	idx = (int) max(0, idx) % count;
+	sv = QRY_SV_ByIndex(idx++);
+	if (idx >= count)
+		idx = 0;
+
+	if (!sv)
+		return;
+
+	// drop a stale outstanding probe so we can retry later
+	if (sv->mesh_nonce && current - sv->mesh_probe_sent_at > MESH_PENDING_TIMEOUT)
+		sv->mesh_nonce = 0;
+
+	if (sv->mesh_nonce)
+		return; // probe already in flight for this server
+
+	{
+		double interval = sv->is_mesh ? mesh_query_interval->value : mesh_probe_interval->value;
+
+		if (sv->mesh_probed && current - sv->mesh_probe_sent_at < interval)
+			return; // too soon to re-probe
+	}
+
+	// the probe itself is plain text (goes through the normal
+	// SV_ConnectionlessPacket dispatch on the remote qwfwd, same as any
+	// other out-of-band command) - only the REPLY is binary, which is why
+	// only the reply needs the special interception in svc.c
+	sv->mesh_nonce = QRY_Mesh_NewNonce();
+	sv->mesh_probe_sent_at = current;
+	sv->mesh_probed = true;
+
+	{
+		char packet[32];
+		int  len = snprintf(packet, sizeof(packet), "\xff\xff\xff\xff%s %u", MESH_PROBE_CMD, sv->mesh_nonce);
+
+		NET_SendPacket(net_socket, len, packet, &sv->addr);
+	}
+
+	// mark other servers that already timed out too, so a single slow
+	// mesh doesn't starve the round-robin (cheap opportunistic sweep)
+	for (i = 0, sv = servers; sv; sv = sv->next, i++)
+	{
+		if (sv->mesh_nonce && current - sv->mesh_probe_sent_at > MESH_PENDING_TIMEOUT)
+			sv->mesh_nonce = 0;
+	}
+}
+
+// finds the server_t that has this nonce as its outstanding probe -
+// this IS the anti-spoofing check: an off-path attacker forging net_from
+// still needs to guess a live 32-bit nonce tied to a specific pending
+// probe, not just "any address in our server list"
+static server_t *QRY_Mesh_ByNonce(unsigned int nonce)
+{
+	server_t *sv;
+
+	if (!nonce)
+		return NULL;
+
+	for (sv = servers; sv; sv = sv->next)
+		if (sv->mesh_nonce == nonce)
+			return sv;
+
+	return NULL;
+}
+
+qbool QRY_Mesh_IsMeshReply(void)
+{
+	if (net_message.cursize < 6)
+		return false;
+
+	return net_message.data[4] == MESH_MAGIC0 && net_message.data[5] == MESH_MAGIC1;
+}
+
+// parses a MESH_MSG_PINGSTATUS_REPLY payload: strictly-validated sequence of
+// 8-byte records (int32 raw IP + int16 port host-order + int16 ping).
+// every read is bounds-checked against buflen before touching memory; a
+// truncated trailing record (buflen not a multiple of 8) is ignored rather
+// than read out of bounds.
+static void QRY_Mesh_ParsePingStatusPayload(server_t *sv, const byte *buf, size_t buflen)
+{
+	size_t offset = 0;
+
+	while (offset + 8 <= buflen)
+	{
+		struct sockaddr_in addr;
+		unsigned short port_h;
+		short ping;
+
+		memset(&addr, 0, sizeof(addr));
+		addr.sin_family = AF_INET;
+		memcpy(&addr.sin_addr, buf + offset, 4); // raw network-order bytes, explicit copy (no pointer punning)
+
+		port_h = (unsigned short) (buf[offset+4] | (buf[offset+5] << 8));
+		addr.sin_port = htons(port_h);
+
+		ping = (short) (buf[offset+6] | (buf[offset+7] << 8));
+
+		if (ping >= 0)
+			QRY_Mesh_StoreHop2(sv, &addr, ping);
+
+		offset += 8;
+	}
+}
+
+// entry point called from svc.c once QRY_Mesh_IsMeshReply() has already
+// confirmed the wire marker; still re-validates everything because the
+// marker alone is not proof of authenticity
+void QRY_Mesh_HandleReply(void)
+{
+	const byte		*data = net_message.data;
+	int				len = net_message.cursize;
+	byte			type;
+	unsigned int	nonce;
+	server_t		*sv;
+
+	if (len < 12) // 4 (oob) + 2 (magic) + 1 (type) + 4 (nonce) + 1 (padding), see wire format below
+		return;
+
+	type = data[6];
+
+	memcpy(&nonce, data + 7, 4); // wire nonce is little-endian on the sending side by construction, memcpy keeps this a single machine word here
+
+	if (type != MESH_MSG_PINGSTATUS_REPLY)
+		return; // we only ever expect this type as a client-side probe reply
+
+	sv = QRY_Mesh_ByNonce(nonce);
+	if (!sv)
+		return; // no matching outstanding probe: forged, stale, or duplicate reply - drop silently
+
+	if (!NET_CompareAddress(&net_from, &sv->addr))
+		return; // nonce matched a different address than the wire source - drop
+
+	sv->mesh_nonce = 0; // consume the nonce, one reply per probe
+	sv->is_mesh = true;
+	sv->mesh_reply_at = Sys_DoubleTime();
+
+	QRY_Mesh_ParsePingStatusPayload(sv, data + 11, (size_t)(len - 11));
+}
+
+//==============================================
 
 void QRY_Frame(void)
 {
@@ -688,6 +1117,7 @@ void QRY_Frame(void)
 	QRY_QueryMasters();				// request time to time server list from masters
 	QRY_HeartbeatMasters();			// send heartbeat to masters time to time
 	QRY_SV_PingServers();			// ping time to time normal qw servers
+	QRY_Mesh_QueryPeers();			// probe/re-probe servers for mesh (P2P) capability
 }
 
 //==============================================
@@ -698,6 +1128,10 @@ void QRY_Init(void)
 	masters_heartbeat	= Cvar_Get("masters_heartbeat",	"1", 0);
 	masters_list		= Cvar_Get("masters",			QW_DEFAULT_MASTER_SERVERS, 0);
 	masters_filter_servers = Cvar_Get("masters_filter_servers",	QW_DEFAULT_SV_FILTER, 0);
+
+	mesh_enable			= Cvar_Get("mesh_enable",			"1",	0);
+	mesh_query_interval	= Cvar_Get("mesh_query_interval",	"300",	0);
+	mesh_probe_interval	= Cvar_Get("mesh_probe_interval",	"600",	0);
 
 	Cmd_AddCommand("svlist", QRY_Cmd_SvList_f);
 	Cmd_AddCommand("heartbeat", QRY_Cmd_Heartbeat_f);
