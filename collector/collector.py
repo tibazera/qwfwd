@@ -361,12 +361,112 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        # a browser page can be served from anywhere (the map artifact,
+        # localhost during dev, etc) - this endpoint has no secret/mutating
+        # behavior, so an open CORS policy is fine here
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
+
+    def do_OPTIONS(self) -> None:
+        # CORS preflight, harmless to answer generically for any path
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "*")
+        self.end_headers()
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         qs = parse_qs(parsed.query)
+
+        if parsed.path == "/client-ping":
+            # A browser cannot open a raw UDP or TCP socket, so it cannot
+            # measure its own RTT to a qwfwd proxy directly (the QW
+            # protocol is UDP-only, and even a minimal TCP echo target
+            # would need per-proxy HTTPS/WSS certs to be reachable from an
+            # HTTPS page without mixed-content blocking - not "minimal" at
+            # that point). This endpoint is deliberately the SMALLEST
+            # possible response (no body work, no lookups) so that
+            # round-trip time to it approximates network RTT to the
+            # collector itself, not app latency. The browser is expected
+            # to call this several times and use the minimum observed RTT
+            # (median/min filters out one-off jitter from the JS event
+            # loop, not the network).
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return
+
+        if parsed.path == "/estimate-route":
+            # ESTIMATE, not a measurement: total = (browser -> collector,
+            # measured by the caller via /client-ping) + (collector's own
+            # last-measured proxy -> ... -> destination path, real UDP
+            # data). This is only as good as how close the collector's own
+            # network position is to the visitor's - if the collector is
+            # in São Paulo and the visitor is in Chile asking about a
+            # route to Lisbon, summing via São Paulo can over- or
+            # under-estimate substantially depending on where the real
+            # backbone path goes. The response says so explicitly so a UI
+            # never presents this as ground truth.
+            client_to_collector_str = qs.get("client_to_collector_ms", [""])[0]
+            entry_str = qs.get("entry", [""])[0]
+            to_str = qs.get("to", [""])[0]
+
+            try:
+                client_to_collector_ms = float(client_to_collector_str)
+            except ValueError:
+                self._send_json(
+                    {"error": "usage: /estimate-route?client_to_collector_ms=N&entry=ip:port&to=ip:port"},
+                    status=400,
+                )
+                return
+            if client_to_collector_ms < 0 or client_to_collector_ms > 5000:
+                self._send_json({"error": "client_to_collector_ms out of plausible range"}, status=400)
+                return
+
+            entry_addr = parse_addr_param(entry_str)
+            to_addr = parse_addr_param(to_str)
+            if not entry_addr or not to_addr:
+                self._send_json(
+                    {"error": "usage: /estimate-route?client_to_collector_ms=N&entry=ip:port&to=ip:port"},
+                    status=400,
+                )
+                return
+
+            result = dijkstra(entry_addr, to_addr)
+            if result is None:
+                self._send_json(
+                    {"error": "no known route from entry proxy to destination", "entry": entry_str, "to": to_str},
+                    status=404,
+                )
+                return
+
+            proxy_leg_ms, path = result
+            with graph.lock:
+                path_geo = [_geo_to_dict(graph.geo.get(addr)) for addr in path]
+
+            self._send_json(
+                {
+                    "estimate": True,
+                    "caveat": (
+                        "client_to_collector_ms is your real measured RTT to the collector, "
+                        "not to the entry proxy. The total assumes your path to the entry proxy "
+                        "is similar in cost to your path to this collector, which is only accurate "
+                        "if the collector is network-close to you. Treat this as an approximation."
+                    ),
+                    "client_to_collector_ms": client_to_collector_ms,
+                    "entry_to_destination_ms": proxy_leg_ms,
+                    "estimated_total_ms": client_to_collector_ms + proxy_leg_ms,
+                    "entry": entry_str,
+                    "to": to_str,
+                    "hops": len(path) - 1,
+                    "path": [f"{ip}:{port}" for ip, port in path],
+                    "path_geo": path_geo,
+                }
+            )
+            return
 
         if parsed.path == "/snapshot":
             self._send_json(
@@ -444,7 +544,10 @@ def main() -> None:
     recollect_thread.start()
 
     server = ThreadingHTTPServer(("0.0.0.0", 8730), Handler)
-    print("[collector] serving on :8730 (/route?from=ip:port&to=ip:port, /snapshot, /geo, /health)")
+    print(
+        "[collector] serving on :8730 "
+        "(/route, /estimate-route, /client-ping, /snapshot, /geo, /health)"
+    )
     server.serve_forever()
 
 
