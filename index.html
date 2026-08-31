@@ -620,17 +620,29 @@ function renderTopRoutes(addr, result) {
     routes.forEach((r, idx) => {
       const city = r.to_geo ? `${r.to_geo.city}, ${r.to_geo.country_code}` : r.to;
       const isPinned = PINNED_PROXIES.has(r.to);
-      // Intermediate hops (skip origin and final destination) so multi-hop
-      // routes show WHICH proxies are relaying, not just the hop count.
-      const hopNames = r.hops > 1 && r.path_geo
-        ? r.path_geo.slice(1, -1).map(g => g ? `${g.city}, ${g.country_code}` : '?').join(' &rarr; ')
+      // path[0] is the origin itself, path[1] is the first proxy the
+      // client actually connects to (what cl_proxy_addr must point at) -
+      // intermediate/final hops after that are relayed proxy-side, the
+      // client never talks to them directly.
+      const firstHopAddr = r.path && r.path.length > 1 ? r.path[1] : r.to;
+      // Full intermediate chain (skip origin, keep everything through the
+      // destination) shown as "ip:port (City, CC)" so the address is
+      // always visible next to the human-readable place name.
+      const hopLine = r.hops > 1 && r.path && r.path_geo
+        ? r.path.slice(1).map((addrStr, i) => {
+            const g = r.path_geo[i + 1];
+            return g ? `${addrStr} (${g.city}, ${g.country_code})` : addrStr;
+          }).join(' &rarr; ')
         : '';
       html += `<div class="route-row" data-idx="${idx}" style="cursor:pointer;flex-direction:column;align-items:stretch;${isPinned ? 'border-color:var(--warn)' : ''}">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%">
           <span class="target">${city}${r.hops > 1 ? ` (${r.hops} hops)` : ''}</span>
           <span class="ping ${pingClass(r.total_ping_ms)}">${r.total_ping_ms.toFixed(0)}ms</span>
         </div>
-        ${hopNames ? `<div style="font-size:9.5px;color:var(--text-dim);margin-top:3px">via ${hopNames}</div>` : ''}
+        <div style="font-size:9.5px;color:var(--text-dim);margin-top:3px;font-family:var(--mono)">${hopLine || r.to}</div>
+        <div style="display:flex;justify-content:flex-end;margin-top:5px">
+          <button class="btn copy-proxy-btn" data-addr="${firstHopAddr}" style="width:auto;padding:4px 8px;font-size:9.5px">copiar cl_proxy_addr</button>
+        </div>
       </div>`;
     });
     html += `</div>`;
@@ -643,9 +655,25 @@ function renderTopRoutes(addr, result) {
   drawTopRoutes(addr, routes);
 
   document.querySelectorAll('.route-row[data-idx]').forEach(el => {
-    el.addEventListener('click', () => {
+    el.addEventListener('click', (ev) => {
+      if (ev.target.closest('.copy-proxy-btn')) return; // let the copy button handle its own click
       const idx = parseInt(el.dataset.idx, 10);
       drawSingleRoute(routes[idx]);
+    });
+  });
+
+  document.querySelectorAll('.copy-proxy-btn').forEach(btn => {
+    btn.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      const cmd = `cl_proxy_addr ${btn.dataset.addr}`;
+      try {
+        await navigator.clipboard.writeText(cmd);
+        const original = btn.textContent;
+        btn.textContent = 'copiado!';
+        setTimeout(() => { btn.textContent = original; }, 1400);
+      } catch (err) {
+        btn.textContent = 'erro ao copiar';
+      }
     });
   });
 
