@@ -843,6 +843,27 @@ function estimatePlayerLegMs(distanceKm) {
   return Math.max(3, 5 + distanceKm * 0.014);
 }
 
+function nearbyEntryCandidates(location, destination) {
+  const sourcesWithEdges = new Set(liveData.edges.map(edge => edge.from));
+  const all = Object.entries(liveData.nodes)
+    .filter(([addr, info]) => (addr === destination || sourcesWithEdges.has(addr)) && Number.isFinite(Number(info.lat)) && Number.isFinite(Number(info.lon)))
+    .map(([addr, info]) => ({ addr, info, distanceKm: haversineKm(location, { lat: Number(info.lat), lon: Number(info.lon) }) }))
+    .sort((a, b) => a.distanceKm - b.distanceKm);
+
+  if (!all.length) return [];
+
+  // The first hop must be reasonably close to the player. Without a real
+  // browser-to-proxy ping, allowing arbitrary worldwide entries can recommend
+  // a large detour (for example Brazil -> Miami -> Lisbon) just because the
+  // measured mesh leg after Miami happens to look good.
+  const nearestKm = all[0].distanceKm;
+  const plausibleRadiusKm = Math.max(750, nearestKm + 1500, nearestKm * 1.5);
+  return all.filter(candidate =>
+    candidate.distanceKm <= plausibleRadiusKm ||
+    (location.countryCode && candidate.info.country_code === location.countryCode)
+  ).slice(0, 32);
+}
+
 function renderNearbyState() {
   if (nearbyMode.phase === 'locating') {
     document.getElementById('panel').innerHTML = `<h2>${tr('nearbyTitle')}</h2><p class="empty-hint">${tr('nearbyPrivacy')}</p><div class="overlay-msg" style="position:static;transform:none;margin:18px 0"><div class="spinner"></div>${tr('locating')}</div>`;
@@ -921,12 +942,7 @@ async function chooseNearbyDestination(destination) {
   nearbyMode.phase = 'calculating';
   renderNearbyState();
 
-  const sourcesWithEdges = new Set(liveData.edges.map(edge => edge.from));
-  const candidates = Object.entries(liveData.nodes)
-    .filter(([addr, info]) => (addr === destination || sourcesWithEdges.has(addr)) && Number.isFinite(Number(info.lat)) && Number.isFinite(Number(info.lon)))
-    .map(([addr, info]) => ({ addr, info, distanceKm: haversineKm(nearbyMode.location, { lat: Number(info.lat), lon: Number(info.lon) }) }))
-    .sort((a, b) => a.distanceKm - b.distanceKm)
-    .slice(0, 16);
+  const candidates = nearbyEntryCandidates(nearbyMode.location, destination);
 
   try {
     const entries = candidates.map(candidate => candidate.addr);
