@@ -109,6 +109,12 @@ header .stat {
   color: var(--text-dim);
 }
 header .stat b { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 600; }
+.lang-switch { display: flex; gap: 4px; margin-left: 4px; }
+.lang-switch button {
+  font: 600 9px var(--mono); color: var(--text-dim); background: transparent;
+  border: 1px solid var(--border); border-radius: 5px; padding: 3px 6px; cursor: pointer;
+}
+.lang-switch button.active { color: var(--accent); border-color: var(--accent); }
 
 main {
   flex: 1;
@@ -267,7 +273,16 @@ aside h2 {
   font-size: 10px;
   color: var(--text-dim);
   line-height: 1.6;
-  word-break: break-all;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.hop-entry {
+  display: inline-block;
+  white-space: nowrap;
+}
+.hop-arrow {
+  display: inline-block;
+  padding: 0 0.35em;
 }
 .route-row .copy-proxy-btn {
   margin-top: 7px;
@@ -348,24 +363,28 @@ footer {
 </style>
 
 <header>
-  <div class="brand"><span class="dot"></span><h1>qwfwd &mdash; malha mundial</h1></div>
+  <div class="brand"><span class="dot"></span><h1 id="brand-title">qwfwd &mdash; malha mundial</h1></div>
   <span class="sub" id="subtitle">conectando ao coletor...</span>
   <div class="stat">
-    <span>proxies <b id="stat-nodes">&mdash;</b></span>
-    <span>arestas <b id="stat-edges">&mdash;</b></span>
-    <span>atualizado <b id="stat-age">&mdash;</b></span>
+    <span><span id="stat-proxies-label">proxies</span> <b id="stat-nodes">&mdash;</b></span>
+    <span><span id="stat-edges-label">arestas</span> <b id="stat-edges">&mdash;</b></span>
+    <span><span id="stat-updated-label">atualizado</span> <b id="stat-age">&mdash;</b></span>
+  </div>
+  <div class="lang-switch" aria-label="Language">
+    <button type="button" data-lang="pt" class="active">PT</button>
+    <button type="button" data-lang="en">EN</button>
   </div>
 </header>
 
 <main>
   <div id="map-wrap">
     <svg id="map"></svg>
-    <div class="overlay-msg" id="loading-msg"><div class="spinner"></div>consultando o coletor ao vivo</div>
+    <div class="overlay-msg" id="loading-msg"><div class="spinner"></div><span id="loading-text">consultando o coletor ao vivo</span></div>
     <div class="legend" id="legend" style="display:none">
       <span><i style="background:var(--good)"></i>&lt;40ms</span>
       <span><i style="background:var(--warn)"></i>40&ndash;100ms</span>
       <span><i style="background:var(--bad)"></i>&gt;100ms</span>
-      <span><i style="background:var(--warn);height:9px;border-radius:50%"></i>servidor de teste</span>
+      <span><i style="background:var(--warn);height:9px;border-radius:50%"></i><span id="legend-test">servidor de teste</span></span>
     </div>
     <div class="hint" id="hint" style="display:none">arraste / pinça pra zoom</div>
   </div>
@@ -384,6 +403,76 @@ footer {
 <footer id="footer-note">carregando topologia mundial e dados ao vivo do coletor&hellip;</footer>
 
 <script>
+const I18N = {
+  pt: {
+    title: 'Malha Mundial qwfwd', brand: 'qwfwd — malha mundial', connecting: 'conectando ao coletor...',
+    proxies: 'proxies', edges: 'arestas', updated: 'atualizado', loading: 'consultando o coletor ao vivo',
+    testServer: 'servidor de teste', zoom: 'arraste / pinça pra zoom', details: 'Detalhes',
+    intro: 'Toque num proxy pra ver o ranking dos 10 melhores destinos a partir dele.',
+    note: '<strong>Nota:</strong> este ranking mede proxy↔proxy (dados reais da malha). O trecho você→proxy ainda não considera de onde você está jogando — escolha o proxy mais perto de você geograficamente e depois veja aqui os melhores saltos a partir dele.',
+    footerLoading: 'carregando topologia mundial e dados ao vivo do coletor…',
+    liveSubtitle: (n, m) => `${n} proxies ao vivo · ${m} com medição mesh completa`,
+    agoSec: n => `${n}s atrás`, agoMin: n => `${n}min atrás`,
+    footerLive: 'Mapa ao vivo: dados frescos do coletor a cada 20s. Toque em dois proxies pra comparar rota direta (vermelha) vs. via malha (verde). Mapa base: Natural Earth.',
+    collectorFail: 'não consegui falar com o coletor', selected: 'Origem selecionada', test: 'Servidor de teste',
+    noHostname: '(sem hostname)', topTen: 'Top 10 melhores destinos', querying: 'consultando o coletor ao vivo',
+    collectorError: e => `Não consegui falar com o coletor (${e}).`, origin: 'Origem', destinations: 'destinos', known: 'conhecidos',
+    noRoutes: 'Ainda sem rotas medidas a partir deste proxy.', hops: 'hops', copyProxy: 'copiar cl_proxyaddr', copyConnect: 'copiar connect',
+    clear: 'Limpar seleção', copied: 'copiado!', copyError: 'erro ao copiar'
+    , comparing: 'Comparando rotas...', error: 'Erro', comparison: 'Comparação de rotas', direct: 'Direto (linha vermelha)',
+    noProxy: 'sem proxy', noDirect: 'Sem medição direta conhecida entre esses dois pontos.', mesh: 'Via malha (linha verde)',
+    noMesh: 'Nenhuma rota conhecida entre esses dois pontos.', newComparison: 'Nova comparação', chooseOrigin: 'Toque num ponto do mapa pra escolher a origem.',
+    faster: n => `${n}ms mais rápido via malha`, slower: n => `${n}ms mais lento via malha`, same: 'mesmo tempo, direto já é ótimo'
+  },
+  en: {
+    title: 'qwfwd Worldwide Mesh', brand: 'qwfwd — worldwide mesh', connecting: 'connecting to collector...',
+    proxies: 'proxies', edges: 'edges', updated: 'updated', loading: 'querying live collector',
+    testServer: 'test server', zoom: 'drag / pinch to zoom', details: 'Details',
+    intro: 'Select a proxy to see its ranking of the 10 best destinations.',
+    note: '<strong>Note:</strong> this ranking measures proxy↔proxy latency (real mesh data). The player→proxy leg does not yet account for where you are playing from — choose the proxy geographically closest to you, then check the best hops from it.',
+    footerLoading: 'loading worldwide topology and live collector data…',
+    liveSubtitle: (n, m) => `${n} live proxies · ${m} with complete mesh measurements`,
+    agoSec: n => `${n}s ago`, agoMin: n => `${n}min ago`,
+    footerLive: 'Live map: fresh collector data every 20s. Select two proxies to compare direct (red) vs. mesh (green) routes. Base map: Natural Earth.',
+    collectorFail: 'could not reach the collector', selected: 'Selected origin', test: 'Test server',
+    noHostname: '(no hostname)', topTen: 'Top 10 best destinations', querying: 'querying live collector',
+    collectorError: e => `Could not reach the collector (${e}).`, origin: 'Origin', destinations: 'destinations', known: 'known',
+    noRoutes: 'No measured routes from this proxy yet.', hops: 'hops', copyProxy: 'copy cl_proxyaddr', copyConnect: 'copy connect',
+    clear: 'Clear selection', copied: 'copied!', copyError: 'copy failed'
+    , comparing: 'Comparing routes...', error: 'Error', comparison: 'Route comparison', direct: 'Direct (red line)',
+    noProxy: 'no proxy', noDirect: 'No known direct measurement between these points.', mesh: 'Via mesh (green line)',
+    noMesh: 'No known route between these points.', newComparison: 'New comparison', chooseOrigin: 'Select a point on the map as the origin.',
+    faster: n => `${n}ms faster via mesh`, slower: n => `${n}ms slower via mesh`, same: 'same time; direct is already optimal'
+  }
+};
+let language = localStorage.getItem('qwfwd-language') || (navigator.language.toLowerCase().startsWith('pt') ? 'pt' : 'en');
+function tr(key, ...args) { const value = I18N[language][key]; return typeof value === 'function' ? value(...args) : value; }
+function renderEmptyPanel() {
+  document.getElementById('panel').innerHTML = `<h2>${tr('details')}</h2><p class="empty-hint">${tr('intro')}</p><p class="empty-hint" style="border-top:1px solid var(--border);padding-top:10px">${tr('note')}</p>`;
+}
+function setLanguage(lang) {
+  language = lang === 'en' ? 'en' : 'pt';
+  localStorage.setItem('qwfwd-language', language);
+  document.documentElement.lang = language === 'pt' ? 'pt-BR' : 'en';
+  document.title = tr('title');
+  document.getElementById('brand-title').textContent = tr('brand');
+  document.getElementById('stat-proxies-label').textContent = tr('proxies');
+  document.getElementById('stat-edges-label').textContent = tr('edges');
+  document.getElementById('stat-updated-label').textContent = tr('updated');
+  document.getElementById('legend-test').textContent = tr('testServer');
+  document.getElementById('hint').textContent = tr('zoom');
+  document.getElementById('footer-note').textContent = liveData.lastCollectedAt ? tr('footerLive') : tr('footerLoading');
+  document.querySelectorAll('.lang-switch button').forEach(button => button.classList.toggle('active', button.dataset.lang === language));
+  if (liveData.lastCollectedAt) {
+    document.getElementById('subtitle').textContent = tr('liveSubtitle', Object.keys(liveData.nodes).length, liveData.meshCapableCount || 0);
+    updateAge(liveData.lastCollectedAt);
+  } else {
+    document.getElementById('subtitle').textContent = tr('connecting');
+    document.getElementById('loading-text').textContent = tr('loading');
+  }
+  if (originAddr) showTopRoutes(originAddr); else renderEmptyPanel();
+}
+
 // COLLECTOR_BASE points at a Cloudflare Quick Tunnel HTTPS front for the
 // collector's plain-HTTP :8730 - a page served from HTTPS (this Artifact)
 // cannot fetch() an http:// origin (mixed-content blocking), so the
@@ -401,6 +490,12 @@ const PINNED_PROXIES = new Set([
   '140.235.125.12:30503', // Miami
   '201.23.3.62:30504',   // Fortaleza
 ]);
+const PINNED_GEO = {
+  '103.63.29.40:30501': { country_code: 'PT', country: 'Portugal', region: 'Europe', city: 'Lisbon', lat: 38.7223, lon: -9.1393, hostname: 'qwfwd-mesh-test (Lisboa)', is_proxy: true },
+  '54.232.22.245:30502': { country_code: 'BR', country: 'Brazil', region: 'South America', city: 'São Paulo', lat: -23.5505, lon: -46.6333, hostname: 'qwfwd-mesh-test (São Paulo)', is_proxy: true },
+  '140.235.125.12:30503': { country_code: 'US', country: 'United States', region: 'North America', city: 'Miami', lat: 25.7617, lon: -80.1918, hostname: 'qwfwd-mesh-test (Miami)', is_proxy: true },
+  '201.23.3.62:30504': { country_code: 'BR', country: 'Brazil', region: 'South America', city: 'Fortaleza', lat: -3.7319, lon: -38.5267, hostname: 'qwfwd-mesh-test (Fortaleza)', is_proxy: true },
+};
 
 function pingClass(ms) {
   if (ms < 40) return 'good';
@@ -485,6 +580,11 @@ let nodeElements = {};
 let originAddr = null;
 let destAddr = null;
 
+document.querySelectorAll('.lang-switch button').forEach(button => {
+  button.addEventListener('click', () => setLanguage(button.dataset.lang));
+});
+setLanguage(language);
+
 // --- live data fetch from the collector - this is what makes the map a
 // live view instead of a fixed snapshot: every load (and every periodic
 // refresh) reflects whatever the collector's own measurement cycle knows
@@ -496,6 +596,9 @@ async function fetchLiveSnapshot() {
 
   const geoResp = await fetch(`${COLLECTOR_BASE}/geo`, { cache: 'no-store' });
   const geo = geoResp.ok ? await geoResp.json() : {};
+  // Operator-confirmed locations take precedence over fallible public IP
+  // geolocation (201.23.3.62 is Fortaleza, not Franca).
+  Object.assign(geo, PINNED_GEO);
 
   const nodes = {};
   const edges = [];
@@ -542,6 +645,8 @@ function renderMap(data) {
       .attr('cx', p[0]).attr('cy', p[1])
       .attr('r', isPinned ? 4 : 2.8)
       .attr('class', `node live${isPinned ? ' pinned' : ''}`)
+      .attr('data-addr', addr)
+      .attr('aria-label', `${addr} — ${info.city}, ${info.country_code}`)
       .style('--pulse-delay', `${(i % 12) * 0.18}s`)
       .attr('fill', isPinned ? cssVar('--warn') : cssVar('--accent'))
       .on('click', () => selectNode(addr))
@@ -553,7 +658,7 @@ function renderMap(data) {
   document.getElementById('stat-nodes').textContent = Object.keys(data.nodes).length;
   document.getElementById('stat-edges').textContent = data.edges.length;
   document.getElementById('subtitle').textContent =
-    `${Object.keys(data.nodes).length} proxies ao vivo · ${data.meshCapableCount || 0} com medição mesh completa`;
+    tr('liveSubtitle', Object.keys(data.nodes).length, data.meshCapableCount || 0);
   updateAge(data.lastCollectedAt);
 
   document.getElementById('loading-msg').style.display = 'none';
@@ -564,7 +669,7 @@ function renderMap(data) {
 function updateAge(lastCollectedAt) {
   if (!lastCollectedAt) return;
   const ageSec = Math.max(0, Math.round(Date.now() / 1000 - lastCollectedAt));
-  const label = ageSec < 60 ? `${ageSec}s atrás` : `${Math.round(ageSec / 60)}min atrás`;
+  const label = ageSec < 60 ? tr('agoSec', ageSec) : tr('agoMin', Math.round(ageSec / 60));
   document.getElementById('stat-age').textContent = label;
 }
 
@@ -573,10 +678,10 @@ async function refreshLoop() {
     const data = await fetchLiveSnapshot();
     renderMap(data);
     document.getElementById('footer-note').textContent =
-      'Mapa ao vivo: dados frescos do coletor a cada 20s. Toque em dois proxies pra comparar rota direta (vermelha) vs. via malha (verde). Mapa base: Natural Earth.';
+      tr('footerLive');
   } catch (err) {
     document.getElementById('loading-msg').innerHTML =
-      `<div class="spinner"></div>não consegui falar com o coletor<br><span style="opacity:0.7">${err.message}</span>`;
+      `<div class="spinner"></div>${tr('collectorFail')}<br><span style="opacity:0.7">${err.message}</span>`;
   }
 }
 
@@ -607,14 +712,14 @@ async function showTopRoutes(addr) {
   const info = liveData.nodes[addr];
   const isPinned = PINNED_PROXIES.has(addr);
   document.getElementById('panel').innerHTML = `
-    <h2>${isPinned ? 'Servidor de teste' : 'Origem selecionada'}</h2>
+    <h2>${isPinned ? tr('test') : tr('selected')}</h2>
     <div class="node-card">
       <div class="addr">${addr}</div>
       <div class="place">${info.city}, ${info.country_code}</div>
-      <div class="host">${info.hostname || '(sem hostname)'}</div>
+      <div class="host">${info.hostname || tr('noHostname')}</div>
     </div>
-    <h2>Top 10 melhores destinos</h2>
-    <p class="empty-hint">consultando o coletor ao vivo</p>
+    <h2>${tr('topTen')}</h2>
+    <p class="empty-hint">${tr('querying')}</p>
   `;
 
   let result;
@@ -622,7 +727,7 @@ async function showTopRoutes(addr) {
     const resp = await fetch(`${COLLECTOR_BASE}/top-routes?from=${encodeURIComponent(addr)}&limit=10`, { cache: 'no-store' });
     result = await resp.json();
   } catch (err) {
-    document.getElementById('panel').innerHTML += `<p class="empty-hint">Não consegui falar com o coletor (${err.message}).</p>`;
+    document.getElementById('panel').innerHTML += `<p class="empty-hint">${tr('collectorError', err.message)}</p>`;
     return;
   }
 
@@ -631,16 +736,23 @@ async function showTopRoutes(addr) {
 
 function renderTopRoutes(addr, result) {
   const routes = result.top_routes || [];
+  result.from_geo = PINNED_GEO[addr] || result.from_geo;
+  for (const route of routes) {
+    route.to_geo = PINNED_GEO[route.to] || route.to_geo;
+    if (route.path && route.path_geo) {
+      route.path_geo = route.path.map((pathAddr, i) => PINNED_GEO[pathAddr] || route.path_geo[i]);
+    }
+  }
   let html = `
     <div class="node-card">
-      <div class="place">${result.from_geo ? result.from_geo.city + ', ' + result.from_geo.country_code : 'Origem'}</div>
+      <div class="place">${result.from_geo ? result.from_geo.city + ', ' + result.from_geo.country_code : tr('origin')}</div>
       <div class="addr">${addr}</div>
     </div>
-    <h2>Top ${routes.length} destinos <span style="text-transform:none;letter-spacing:0">&middot; ${result.total_known_destinations} conhecidos</span></h2>
+    <h2>Top ${routes.length} ${tr('destinations')} <span style="text-transform:none;letter-spacing:0">&middot; ${result.total_known_destinations} ${tr('known')}</span></h2>
   `;
 
   if (!routes.length) {
-    html += `<p class="empty-hint">Ainda sem rotas medidas a partir deste proxy.</p>`;
+    html += `<p class="empty-hint">${tr('noRoutes')}</p>`;
   } else {
     html += `<div class="route-list">`;
     routes.forEach((r, idx) => {
@@ -662,24 +774,25 @@ function renderTopRoutes(addr, result) {
       const hopLine = r.hops > 1 && r.path && r.path_geo
         ? r.path.slice(1).map((addrStr, i) => {
             const g = r.path_geo[i + 1];
-            return g ? `${addrStr} (${g.city}, ${g.country_code})` : addrStr;
-          }).join(' &rarr; ')
+            const label = g ? `${addrStr} (${g.city}, ${g.country_code})` : addrStr;
+            return `<span class="hop-entry">${label}</span>`;
+          }).join('<span class="hop-arrow" aria-hidden="true">&rarr;</span>')
         : '';
       html += `<div class="route-row" data-idx="${idx}" style="${isPinned ? 'border-color:var(--warn)' : ''}">
         <div class="row-main">
-          <span class="target">${idx + 1}. ${city}${r.hops > 1 ? ` <span class="hop-count">(${r.hops} hops)</span>` : ''}</span>
+          <span class="target">${idx + 1}. ${city}${r.hops > 1 ? ` <span class="hop-count">(${r.hops} ${tr('hops')})</span>` : ''}</span>
           <span class="ping ${pingClass(r.total_ping_ms)}">${r.total_ping_ms.toFixed(0)}ms</span>
         </div>
         <div class="row-detail">
           <div class="hop-chain">${hopLine || r.to}</div>
-          <button class="btn copy-proxy-btn" data-cmd="${cmdText.replace(/"/g, '&quot;')}">${proxyChain ? 'copiar cl_proxyaddr' : 'copiar connect'}</button>
+          <button class="btn copy-proxy-btn" data-cmd="${cmdText.replace(/"/g, '&quot;')}">${proxyChain ? tr('copyProxy') : tr('copyConnect')}</button>
         </div>
       </div>`;
     });
     html += `</div>`;
   }
 
-  html += `<button class="btn" id="clear-selection">Limpar seleção</button>`;
+  html += `<button class="btn" id="clear-selection">${tr('clear')}</button>`;
 
   document.getElementById('panel').innerHTML = html;
 
@@ -709,10 +822,10 @@ function renderTopRoutes(addr, result) {
       try {
         await navigator.clipboard.writeText(btn.dataset.cmd);
         const original = btn.textContent;
-        btn.textContent = 'copiado!';
+        btn.textContent = tr('copied');
         setTimeout(() => { btn.textContent = original; }, 1400);
       } catch (err) {
-        btn.textContent = 'erro ao copiar';
+        btn.textContent = tr('copyError');
       }
     });
   });
@@ -721,7 +834,7 @@ function renderTopRoutes(addr, result) {
     if (originAddr && nodeElements[originAddr]) nodeElements[originAddr].classed('selected', false);
     originAddr = null; destAddr = null;
     compareGroup.selectAll('*').remove();
-    document.getElementById('panel').innerHTML = `<h2>Detalhes</h2><p class="empty-hint">Toque num proxy pra ver o ranking dos 10 melhores destinos a partir dele.</p>`;
+    renderEmptyPanel();
   });
 }
 
@@ -771,7 +884,7 @@ function drawSingleRoute(route) {
 }
 
 async function runComparison(from, to) {
-  document.getElementById('panel').innerHTML = `<h2>Comparando rotas...</h2><p class="empty-hint">consultando o coletor ao vivo</p>`;
+  document.getElementById('panel').innerHTML = `<h2>${tr('comparing')}</h2><p class="empty-hint">${tr('querying')}</p>`;
   compareGroup.selectAll('*').remove();
 
   let result;
@@ -779,7 +892,7 @@ async function runComparison(from, to) {
     const resp = await fetch(`${COLLECTOR_BASE}/compare?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { cache: 'no-store' });
     result = await resp.json();
   } catch (err) {
-    document.getElementById('panel').innerHTML = `<h2>Erro</h2><p class="empty-hint">Não consegui falar com o coletor (${err.message}).</p>`;
+    document.getElementById('panel').innerHTML = `<h2>${tr('error')}</h2><p class="empty-hint">${tr('collectorError', err.message)}</p>`;
     return;
   }
 
@@ -827,18 +940,18 @@ function showComparePanel(result) {
   const meshMs = result.via_mesh.ping_ms;
   const gain = result.gain_ms;
 
-  let html = `<h2>Comparação de rotas</h2>
+  let html = `<h2>${tr('comparison')}</h2>
     <div class="node-card">
       <div class="addr">${result.from} &rarr; ${result.to}</div>
       <div class="place">${result.from_geo ? result.from_geo.city : '?'} &rarr; ${result.to_geo ? result.to_geo.city : '?'}</div>
     </div>`;
 
-  html += `<h2>Direto (linha vermelha)</h2>`;
+  html += `<h2>${tr('direct')}</h2>`;
   html += result.direct.known
-    ? `<div class="route-row"><span class="target">sem proxy</span><span class="ping ${pingClass(directMs)}">${directMs}ms</span></div>`
-    : `<p class="empty-hint">Sem medição direta conhecida entre esses dois pontos.</p>`;
+    ? `<div class="route-row"><span class="target">${tr('noProxy')}</span><span class="ping ${pingClass(directMs)}">${directMs}ms</span></div>`
+    : `<p class="empty-hint">${tr('noDirect')}</p>`;
 
-  html += `<h2>Via malha (linha verde)</h2>`;
+  html += `<h2>${tr('mesh')}</h2>`;
   if (result.via_mesh.known) {
     html += `<div class="route-row"><span class="target">${result.via_mesh.hops} hop${result.via_mesh.hops === 1 ? '' : 's'}</span><span class="ping ${pingClass(meshMs)}">${meshMs}ms</span></div>`;
     html += `<div class="route-list">`;
@@ -847,17 +960,17 @@ function showComparePanel(result) {
     }
     html += `</div>`;
   } else {
-    html += `<p class="empty-hint">Nenhuma rota conhecida entre esses dois pontos.</p>`;
+    html += `<p class="empty-hint">${tr('noMesh')}</p>`;
   }
 
   if (gain !== null && gain !== undefined) {
     const isFaster = gain > 0.5;
     const isSlower = gain < -0.5;
-    const label = isFaster ? `${gain.toFixed(0)}ms mais rápido via malha` : isSlower ? `${(-gain).toFixed(0)}ms mais lento via malha` : 'mesmo tempo, direto já é ótimo';
+    const label = isFaster ? tr('faster', gain.toFixed(0)) : isSlower ? tr('slower', (-gain).toFixed(0)) : tr('same');
     html += `<div class="gain-banner ${isFaster ? '' : 'neutral'}">${label}</div>`;
   }
 
-  html += `<button class="btn" id="new-compare">Nova comparação</button>`;
+  html += `<button class="btn" id="new-compare">${tr('newComparison')}</button>`;
 
   document.getElementById('panel').innerHTML = html;
   document.getElementById('new-compare')?.addEventListener('click', () => {
@@ -865,7 +978,7 @@ function showComparePanel(result) {
     if (destAddr && nodeElements[destAddr]) nodeElements[destAddr].classed('selected', false);
     originAddr = null; destAddr = null;
     compareGroup.selectAll('*').remove();
-    document.getElementById('panel').innerHTML = `<h2>Detalhes</h2><p class="empty-hint">Toque num ponto do mapa pra escolher a origem.</p>`;
+    document.getElementById('panel').innerHTML = `<h2>${tr('details')}</h2><p class="empty-hint">${tr('chooseOrigin')}</p>`;
   });
 }
 
