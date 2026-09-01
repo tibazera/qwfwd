@@ -171,6 +171,21 @@ svg#map:active { cursor: grabbing; }
 }
 .proxy-choice .proxy-host { display: block; font-size: 11.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .proxy-choice .proxy-addr { display: block; margin-top: 2px; color: var(--text-dim); font: 9.5px var(--mono); }
+.nearby-card {
+  padding: 11px 12px; border: 1px solid var(--accent); border-radius: 8px;
+  background: var(--accent-glow);
+}
+.nearby-card .nearby-title { font-size: 12px; font-weight: 650; color: var(--accent); }
+.nearby-card p { margin: 5px 0 0; font-size: 10.5px; line-height: 1.5; color: var(--text-dim); }
+.nearby-card .btn { margin-top: 9px; background: var(--surface); }
+.nearby-location { font: 600 11px var(--mono); color: var(--accent); }
+.nearby-route { cursor: default; }
+.nearby-route:hover { border-color: var(--border); background: transparent; }
+.nearby-breakdown { margin-top: 5px; font: 9.5px/1.55 var(--mono); color: var(--text-dim); }
+.nearby-breakdown b { color: var(--text); font-weight: 600; }
+.nearby-route .hop-chain { margin-top: 6px; }
+.estimate-tag { color: var(--warn); font-size: 9px; font-weight: 600; }
+.user-location-marker { fill: var(--warn); stroke: var(--surface); stroke-width: 1.5; }
 .route-path {
   stroke-dasharray: 1400;
   stroke-dashoffset: 1400;
@@ -454,7 +469,15 @@ const I18N = {
     noProxy: 'sem proxy', noDirect: 'Sem medição direta conhecida entre esses dois pontos.', mesh: 'Via malha (linha verde)',
     noMesh: 'Nenhuma rota conhecida entre esses dois pontos.', newComparison: 'Nova comparação', chooseOrigin: 'Toque num ponto do mapa pra escolher a origem.',
     faster: n => `${n}ms mais rápido via malha`, slower: n => `${n}ms mais lento via malha`, same: 'mesmo tempo, direto já é ótimo',
-    proxiesIn: city => `Proxies em ${city}`, chooseProxy: 'Escolha o proxy exato que deseja usar como origem.', proxyCount: n => `${n} proxies nesta cidade`
+    proxiesIn: city => `Proxies em ${city}`, chooseProxy: 'Escolha o proxy exato que deseja usar como origem.', proxyCount: n => `${n} proxies nesta cidade`,
+    nearbyTitle: 'Rota perto de mim', nearbyIntro: 'Use sua localização aproximada para sugerir os melhores proxies de entrada. O mapa atual continua funcionando normalmente.',
+    nearbyButton: 'Encontrar rota perto de mim', nearbyPrivacy: 'Ao continuar, o serviço IPWho.is usará seu IP para estimar cidade e coordenadas. Este site não armazena seu IP.',
+    locating: 'Detectando localização aproximada…', locationFailed: 'Não foi possível detectar sua localização.', retry: 'Tentar novamente',
+    detected: 'Localização aproximada', chooseDestination: 'Agora escolha no mapa o proxy ou servidor de destino.',
+    chooseDestinationProxy: 'Escolha o proxy exato que será o destino.', cancelNearby: 'Sair do modo perto de mim', calculating: 'Calculando rotas recomendadas…',
+    recommendations: 'Rotas recomendadas', basedOn: city => `Estimativa para ${city}`, approximate: 'estimado', measured: 'medido',
+    playerEntry: 'você → entrada', meshLeg: 'malha → destino', approxTotal: 'total aproximado', noRecommendations: 'Nenhuma rota conhecida para esse destino.',
+    copyRoute: 'copiar rota', changeDestination: 'Escolher outro destino', locationDisclaimer: 'A localização ajuda a escolher a entrada, mas não substitui uma medição real do seu ping.'
   },
   en: {
     title: 'qwfwd Worldwide Mesh', brand: 'qwfwd — worldwide mesh', connecting: 'connecting to collector...',
@@ -475,13 +498,22 @@ const I18N = {
     noProxy: 'no proxy', noDirect: 'No known direct measurement between these points.', mesh: 'Via mesh (green line)',
     noMesh: 'No known route between these points.', newComparison: 'New comparison', chooseOrigin: 'Select a point on the map as the origin.',
     faster: n => `${n}ms faster via mesh`, slower: n => `${n}ms slower via mesh`, same: 'same time; direct is already optimal',
-    proxiesIn: city => `Proxies in ${city}`, chooseProxy: 'Choose the exact proxy you want to use as the origin.', proxyCount: n => `${n} proxies in this city`
+    proxiesIn: city => `Proxies in ${city}`, chooseProxy: 'Choose the exact proxy you want to use as the origin.', proxyCount: n => `${n} proxies in this city`,
+    nearbyTitle: 'Route near me', nearbyIntro: 'Use your approximate location to suggest the best entry proxies. The current map remains unchanged.',
+    nearbyButton: 'Find a route near me', nearbyPrivacy: 'When you continue, IPWho.is will use your IP to estimate your city and coordinates. This website does not store your IP.',
+    locating: 'Detecting approximate location…', locationFailed: 'Your location could not be detected.', retry: 'Try again',
+    detected: 'Approximate location', chooseDestination: 'Now select the destination proxy or server on the map.',
+    chooseDestinationProxy: 'Choose the exact proxy that will be the destination.', cancelNearby: 'Exit nearby mode', calculating: 'Calculating recommended routes…',
+    recommendations: 'Recommended routes', basedOn: city => `Estimate for ${city}`, approximate: 'estimated', measured: 'measured',
+    playerEntry: 'you → entry', meshLeg: 'mesh → destination', approxTotal: 'approximate total', noRecommendations: 'No known route to this destination.',
+    copyRoute: 'copy route', changeDestination: 'Choose another destination', locationDisclaimer: 'Location helps choose an entry proxy, but it does not replace a real ping measurement.'
   }
 };
 let language = localStorage.getItem('qwfwd-language') || (navigator.language.toLowerCase().startsWith('pt') ? 'pt' : 'en');
 function tr(key, ...args) { const value = I18N[language][key]; return typeof value === 'function' ? value(...args) : value; }
 function renderEmptyPanel() {
-  document.getElementById('panel').innerHTML = `<h2>${tr('details')}</h2><p class="empty-hint">${tr('intro')}</p><p class="empty-hint" style="border-top:1px solid var(--border);padding-top:10px">${tr('note')}</p>`;
+  document.getElementById('panel').innerHTML = `<div class="nearby-card"><div class="nearby-title">${tr('nearbyTitle')}</div><p>${tr('nearbyIntro')}</p><button type="button" class="btn" id="start-nearby">${tr('nearbyButton')}</button></div><h2>${tr('details')}</h2><p class="empty-hint">${tr('intro')}</p><p class="empty-hint" style="border-top:1px solid var(--border);padding-top:10px">${tr('note')}</p>`;
+  document.getElementById('start-nearby')?.addEventListener('click', startNearbyMode);
 }
 function setLanguage(lang) {
   language = lang === 'en' ? 'en' : 'pt';
@@ -503,7 +535,8 @@ function setLanguage(lang) {
     document.getElementById('subtitle').textContent = tr('connecting');
     document.getElementById('loading-text').textContent = tr('loading');
   }
-  if (originAddr) showTopRoutes(originAddr);
+  if (nearbyMode.active) renderNearbyState();
+  else if (originAddr) showTopRoutes(originAddr);
   else if (activeCityGroup) showProxyGroup(activeCityGroup);
   else renderEmptyPanel();
 }
@@ -608,6 +641,7 @@ zoomGroup.selectAll('path.land')
 const edgesGroup = zoomGroup.append('g');
 const nodesGroup = zoomGroup.append('g');
 const compareGroup = zoomGroup.append('g');
+const nearbyGroup = zoomGroup.append('g');
 
 const zoom = d3.zoom()
   .scaleExtent([1, 12])
@@ -615,6 +649,9 @@ const zoom = d3.zoom()
     currentZoomK = ev.transform.k;
     zoomGroup.attr('transform', ev.transform);
     nodesGroup.selectAll('[data-base-r]').attr('r', function () {
+      return Number(this.getAttribute('data-base-r')) / ev.transform.k;
+    });
+    nearbyGroup.selectAll('[data-base-r]').attr('r', function () {
       return Number(this.getAttribute('data-base-r')) / ev.transform.k;
     });
     nodesGroup.selectAll('[data-base-font]').attr('font-size', function () {
@@ -632,6 +669,7 @@ let destAddr = null;
 let activeCityGroup = null;
 let cityGroups = new Map();
 let currentZoomK = 1;
+let nearbyMode = { active: false, phase: 'idle', location: null, destination: null, routes: [] };
 
 document.querySelectorAll('.lang-switch button').forEach(button => {
   button.addEventListener('click', () => setLanguage(button.dataset.lang));
@@ -730,11 +768,11 @@ function renderMap(data) {
       .attr('fill', isPinned && !isCluster ? cssVar('--warn') : cssVar('--accent'))
       .on('click', (ev) => {
         ev.stopPropagation();
-        if (isCluster) showProxyGroup(group); else selectNode(group.proxies[0].addr);
+        if (isCluster) showProxyGroup(group); else handleProxySelection(group.proxies[0].addr);
       })
       .on('touchend', (ev) => {
         ev.preventDefault(); ev.stopPropagation();
-        if (isCluster) showProxyGroup(group); else selectNode(group.proxies[0].addr);
+        if (isCluster) showProxyGroup(group); else handleProxySelection(group.proxies[0].addr);
       });
     if (group.proxies.some(proxy => proxy.addr === originAddr)) circle.classed('selected', true);
     if (isCluster) {
@@ -789,6 +827,162 @@ setInterval(async () => {
 }, 20000);
 setInterval(() => updateAge(liveData.lastCollectedAt), 5000);
 
+function haversineKm(a, b) {
+  const rad = degrees => degrees * Math.PI / 180;
+  const dLat = rad(b.lat - a.lat);
+  const dLon = rad(b.lon - a.lon);
+  const lat1 = rad(a.lat);
+  const lat2 = rad(b.lat);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+function estimatePlayerLegMs(distanceKm) {
+  // Geographic estimate only: approximate Internet path inflation plus
+  // access-network overhead. It ranks likely entries; it is not a ping.
+  return Math.max(3, 5 + distanceKm * 0.014);
+}
+
+function renderNearbyState() {
+  if (nearbyMode.phase === 'locating') {
+    document.getElementById('panel').innerHTML = `<h2>${tr('nearbyTitle')}</h2><p class="empty-hint">${tr('nearbyPrivacy')}</p><div class="overlay-msg" style="position:static;transform:none;margin:18px 0"><div class="spinner"></div>${tr('locating')}</div>`;
+    return;
+  }
+  if (nearbyMode.phase === 'error') {
+    document.getElementById('panel').innerHTML = `<h2>${tr('nearbyTitle')}</h2><p class="empty-hint">${tr('locationFailed')}</p><button class="btn" id="retry-nearby">${tr('retry')}</button><button class="btn" id="cancel-nearby">${tr('cancelNearby')}</button>`;
+    document.getElementById('retry-nearby')?.addEventListener('click', startNearbyMode);
+    document.getElementById('cancel-nearby')?.addEventListener('click', cancelNearbyMode);
+    return;
+  }
+  if (nearbyMode.phase === 'choosing') {
+    const loc = nearbyMode.location;
+    document.getElementById('panel').innerHTML = `<h2>${tr('nearbyTitle')}</h2><div class="nearby-card"><div class="nearby-title">${tr('detected')}</div><p class="nearby-location">${loc.city}, ${loc.region || loc.country}</p><p>${tr('chooseDestination')}</p></div><p class="empty-hint">${tr('locationDisclaimer')}</p><button class="btn" id="cancel-nearby">${tr('cancelNearby')}</button>`;
+    document.getElementById('cancel-nearby')?.addEventListener('click', cancelNearbyMode);
+    drawNearbyLocation();
+    return;
+  }
+  if (nearbyMode.phase === 'calculating') {
+    document.getElementById('panel').innerHTML = `<h2>${tr('nearbyTitle')}</h2><div class="nearby-location">${nearbyMode.location.city} → ${nearbyMode.destination}</div><div class="overlay-msg" style="position:static;transform:none;margin:18px 0"><div class="spinner"></div>${tr('calculating')}</div>`;
+    return;
+  }
+  if (nearbyMode.phase === 'results') renderNearbyResults();
+}
+
+async function startNearbyMode() {
+  nearbyMode = { active: true, phase: 'locating', location: null, destination: null, routes: [] };
+  originAddr = null;
+  clearCityGroup();
+  compareGroup.selectAll('*').remove();
+  renderNearbyState();
+  try {
+    const response = await fetch('https://ipwho.is/', { cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok || data.success === false || !Number.isFinite(Number(data.latitude)) || !Number.isFinite(Number(data.longitude))) throw new Error('location unavailable');
+    nearbyMode.location = {
+      city: data.city || data.region || data.country || '?', region: data.region || '', country: data.country || '',
+      countryCode: data.country_code || '', lat: Number(data.latitude), lon: Number(data.longitude)
+    };
+    nearbyMode.phase = 'choosing';
+  } catch (error) {
+    nearbyMode.phase = 'error';
+  }
+  renderNearbyState();
+}
+
+function cancelNearbyMode() {
+  nearbyMode = { active: false, phase: 'idle', location: null, destination: null, routes: [] };
+  nearbyGroup.selectAll('*').remove();
+  compareGroup.selectAll('*').remove();
+  clearCityGroup();
+  renderEmptyPanel();
+}
+
+function drawNearbyLocation() {
+  nearbyGroup.selectAll('*').remove();
+  if (!nearbyMode.location) return;
+  const point = projection([nearbyMode.location.lon, nearbyMode.location.lat]);
+  if (!point) return;
+  nearbyGroup.append('circle')
+    .attr('class', 'user-location-marker')
+    .attr('cx', point[0]).attr('cy', point[1])
+    .attr('r', 5 / currentZoomK)
+    .attr('data-base-r', 5)
+    .append('title').text(`${tr('detected')}: ${nearbyMode.location.city}`);
+}
+
+function handleProxySelection(addr) {
+  if (nearbyMode.active && nearbyMode.location) chooseNearbyDestination(addr);
+  else selectNode(addr);
+}
+
+async function chooseNearbyDestination(destination) {
+  clearCityGroup();
+  nearbyMode.destination = destination;
+  nearbyMode.phase = 'calculating';
+  renderNearbyState();
+
+  const sourcesWithEdges = new Set(liveData.edges.map(edge => edge.from));
+  const candidates = Object.entries(liveData.nodes)
+    .filter(([addr, info]) => (addr === destination || sourcesWithEdges.has(addr)) && Number.isFinite(Number(info.lat)) && Number.isFinite(Number(info.lon)))
+    .map(([addr, info]) => ({ addr, info, distanceKm: haversineKm(nearbyMode.location, { lat: Number(info.lat), lon: Number(info.lon) }) }))
+    .sort((a, b) => a.distanceKm - b.distanceKm)
+    .slice(0, 16);
+
+  try {
+    const entries = candidates.map(candidate => candidate.addr);
+    const response = await fetch(`${COLLECTOR_BASE}/routes-to?to=${encodeURIComponent(destination)}&entries=${encodeURIComponent(entries.join(','))}`, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`collector returned ${response.status}`);
+    const data = await response.json();
+    const candidateByAddr = new Map(candidates.map(candidate => [candidate.addr, candidate]));
+    nearbyMode.routes = (data.routes || []).filter(route => route.known).map(route => {
+      const candidate = candidateByAddr.get(route.entry);
+      const playerLegMs = estimatePlayerLegMs(candidate.distanceKm);
+      route.path_geo = (route.path || []).map((pathAddr, i) => confirmedGeo(pathAddr, route.path_geo?.[i]));
+      return { ...route, candidate, playerLegMs, estimatedTotalMs: playerLegMs + route.total_ping_ms };
+    }).sort((a, b) => a.estimatedTotalMs - b.estimatedTotalMs).slice(0, 3);
+  } catch (error) {
+    nearbyMode.routes = [];
+  }
+  nearbyMode.phase = 'results';
+  renderNearbyState();
+}
+
+function renderNearbyResults() {
+  const routes = nearbyMode.routes;
+  const destinationGeo = liveData.nodes[nearbyMode.destination];
+  let html = `<h2>${tr('recommendations')}</h2><div class="nearby-card"><div class="nearby-title">${tr('basedOn', nearbyMode.location.city)}</div><p>${nearbyMode.location.city} → ${destinationGeo ? destinationGeo.city + ', ' + destinationGeo.country_code : nearbyMode.destination}</p><p>${tr('locationDisclaimer')}</p></div>`;
+  if (!routes.length) {
+    html += `<p class="empty-hint">${tr('noRecommendations')}</p>`;
+  } else {
+    html += `<div class="route-list">`;
+    routes.forEach((route, index) => {
+      const entryGeo = route.candidate.info;
+      const chain = route.path.slice(0, -1).join('@');
+      const command = chain ? `cl_proxyaddr ${chain}; connect ${nearbyMode.destination}` : `connect ${nearbyMode.destination}`;
+      const hopLine = route.path.map((pathAddr, i) => {
+        const geo = route.path_geo?.[i];
+        const place = geo ? `${geo.city}, ${geo.country_code}` : pathAddr;
+        return `<span class="hop-entry" title="${pathAddr}">${place}</span>`;
+      }).join('<span class="hop-arrow" aria-hidden="true">&rarr;</span>');
+      html += `<div class="route-row nearby-route"><div class="row-main"><span class="target">${index + 1}. ${entryGeo.city}, ${entryGeo.country_code}</span><span class="ping ${pingClass(route.estimatedTotalMs)}">~${route.estimatedTotalMs.toFixed(0)}ms</span></div><div class="nearby-breakdown"><span>${tr('playerEntry')}: <b>~${route.playerLegMs.toFixed(0)}ms</b> <span class="estimate-tag">${tr('approximate')}</span></span><br><span>${tr('meshLeg')}: <b>${route.total_ping_ms.toFixed(0)}ms</b> ${tr('measured')}</span><br><span>${route.hops} ${tr('hops')} · ${Math.round(route.candidate.distanceKm)} km</span></div><div class="hop-chain">${hopLine}</div><button class="btn copy-nearby" data-cmd="${command.replace(/"/g, '&quot;')}">${tr('copyRoute')}</button></div>`;
+    });
+    html += `</div>`;
+  }
+  html += `<button class="btn" id="change-nearby-destination">${tr('changeDestination')}</button><button class="btn" id="cancel-nearby">${tr('cancelNearby')}</button>`;
+  document.getElementById('panel').innerHTML = html;
+  document.querySelectorAll('.copy-nearby').forEach(button => button.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(button.dataset.cmd); button.textContent = tr('copied'); }
+    catch (error) { button.textContent = tr('copyError'); }
+  }));
+  document.getElementById('change-nearby-destination')?.addEventListener('click', () => {
+    nearbyMode.phase = 'choosing'; nearbyMode.destination = null; nearbyMode.routes = [];
+    compareGroup.selectAll('*').remove(); renderNearbyState();
+  });
+  document.getElementById('cancel-nearby')?.addEventListener('click', cancelNearbyMode);
+  drawNearbyLocation();
+  if (routes.length) drawSingleRoute(routes[0]);
+}
+
 function clearCityGroup() {
   if (activeCityGroup) {
     for (const proxy of activeCityGroup.proxies) nodeElements[proxy.addr]?.classed('selected', false);
@@ -823,8 +1017,8 @@ function drawSpider(group) {
       .attr('data-base-r', 7)
       .attr('data-addr', proxy.addr)
       .attr('aria-label', `${index + 1}. ${proxy.info.hostname || tr('noHostname')} — ${proxy.addr}`)
-      .on('click', (ev) => { ev.stopPropagation(); selectNode(proxy.addr); })
-      .on('touchend', (ev) => { ev.preventDefault(); ev.stopPropagation(); selectNode(proxy.addr); });
+      .on('click', (ev) => { ev.stopPropagation(); handleProxySelection(proxy.addr); })
+      .on('touchend', (ev) => { ev.preventDefault(); ev.stopPropagation(); handleProxySelection(proxy.addr); });
     proxyCircle.append('title').text(`${proxy.info.hostname || tr('noHostname')} — ${proxy.addr}`);
     layer.append('text')
       .attr('class', 'spider-number')
@@ -845,7 +1039,7 @@ function showProxyGroup(group) {
   drawSpider(group);
 
   let html = `<h2>${tr('proxiesIn', `${group.city}, ${group.countryCode}`)}</h2>
-    <p class="empty-hint">${tr('chooseProxy')}</p>
+    <p class="empty-hint">${tr(nearbyMode.active ? 'chooseDestinationProxy' : 'chooseProxy')}</p>
     <div class="proxy-choice-list">`;
   group.proxies.forEach((proxy, index) => {
     html += `<button type="button" class="proxy-choice" data-addr="${proxy.addr}">
@@ -857,7 +1051,7 @@ function showProxyGroup(group) {
   document.getElementById('panel').innerHTML = html;
   document.getElementById('panel').classList.add('open');
   document.querySelectorAll('.proxy-choice').forEach(button => {
-    button.addEventListener('click', () => selectNode(button.dataset.addr));
+    button.addEventListener('click', () => handleProxySelection(button.dataset.addr));
   });
 }
 
@@ -876,7 +1070,7 @@ function selectNode(addr) {
 svg.on('click.cluster-dismiss', () => {
   if (!activeCityGroup) return;
   clearCityGroup();
-  renderEmptyPanel();
+  if (nearbyMode.active) renderNearbyState(); else renderEmptyPanel();
 });
 
 // The actual point of the tool: for the selected proxy, which OTHER
