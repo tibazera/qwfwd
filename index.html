@@ -140,6 +140,37 @@ svg#map:active { cursor: grabbing; }
 .node.selected { stroke: var(--accent); stroke-width: 2.5; }
 .node.pinned { stroke: var(--warn); stroke-width: 1.6; }
 .node.pinned:hover, .node.pinned.selected { stroke: var(--accent); }
+.city-count {
+  pointer-events: none;
+  fill: var(--surface);
+  font-family: var(--mono);
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+.cluster-ring { fill: var(--surface); stroke: var(--accent); stroke-width: 1.2; }
+.cluster-ring:hover, .cluster-ring.selected { fill: var(--accent-glow); stroke-width: 2; }
+.spider-line { stroke: var(--accent); stroke-width: 0.8; opacity: 0.55; pointer-events: none; }
+.spider-node { fill: var(--surface); stroke: var(--accent); stroke-width: 1.4; cursor: pointer; }
+.spider-node:hover, .spider-node:focus { fill: var(--accent); }
+.spider-number {
+  pointer-events: none; fill: var(--text); font-family: var(--mono); font-weight: 700;
+  text-anchor: middle; dominant-baseline: central;
+}
+.proxy-choice-list { display: flex; flex-direction: column; gap: 6px; }
+.proxy-choice {
+  display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 8px;
+  align-items: center; width: 100%; padding: 8px; text-align: left;
+  color: var(--text); background: transparent; border: 1px solid var(--border);
+  border-radius: 7px; cursor: pointer;
+}
+.proxy-choice:hover, .proxy-choice:focus-visible { border-color: var(--accent); background: var(--accent-glow); outline: none; }
+.proxy-choice .proxy-index {
+  display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%;
+  color: var(--surface); background: var(--accent); font: 700 10px var(--mono);
+}
+.proxy-choice .proxy-host { display: block; font-size: 11.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proxy-choice .proxy-addr { display: block; margin-top: 2px; color: var(--text-dim); font: 9.5px var(--mono); }
 .route-path {
   stroke-dasharray: 1400;
   stroke-dashoffset: 1400;
@@ -422,7 +453,8 @@ const I18N = {
     , comparing: 'Comparando rotas...', error: 'Erro', comparison: 'Comparação de rotas', direct: 'Direto (linha vermelha)',
     noProxy: 'sem proxy', noDirect: 'Sem medição direta conhecida entre esses dois pontos.', mesh: 'Via malha (linha verde)',
     noMesh: 'Nenhuma rota conhecida entre esses dois pontos.', newComparison: 'Nova comparação', chooseOrigin: 'Toque num ponto do mapa pra escolher a origem.',
-    faster: n => `${n}ms mais rápido via malha`, slower: n => `${n}ms mais lento via malha`, same: 'mesmo tempo, direto já é ótimo'
+    faster: n => `${n}ms mais rápido via malha`, slower: n => `${n}ms mais lento via malha`, same: 'mesmo tempo, direto já é ótimo',
+    proxiesIn: city => `Proxies em ${city}`, chooseProxy: 'Escolha o proxy exato que deseja usar como origem.', proxyCount: n => `${n} proxies nesta cidade`
   },
   en: {
     title: 'qwfwd Worldwide Mesh', brand: 'qwfwd — worldwide mesh', connecting: 'connecting to collector...',
@@ -442,7 +474,8 @@ const I18N = {
     , comparing: 'Comparing routes...', error: 'Error', comparison: 'Route comparison', direct: 'Direct (red line)',
     noProxy: 'no proxy', noDirect: 'No known direct measurement between these points.', mesh: 'Via mesh (green line)',
     noMesh: 'No known route between these points.', newComparison: 'New comparison', chooseOrigin: 'Select a point on the map as the origin.',
-    faster: n => `${n}ms faster via mesh`, slower: n => `${n}ms slower via mesh`, same: 'same time; direct is already optimal'
+    faster: n => `${n}ms faster via mesh`, slower: n => `${n}ms slower via mesh`, same: 'same time; direct is already optimal',
+    proxiesIn: city => `Proxies in ${city}`, chooseProxy: 'Choose the exact proxy you want to use as the origin.', proxyCount: n => `${n} proxies in this city`
   }
 };
 let language = localStorage.getItem('qwfwd-language') || (navigator.language.toLowerCase().startsWith('pt') ? 'pt' : 'en');
@@ -470,7 +503,9 @@ function setLanguage(lang) {
     document.getElementById('subtitle').textContent = tr('connecting');
     document.getElementById('loading-text').textContent = tr('loading');
   }
-  if (originAddr) showTopRoutes(originAddr); else renderEmptyPanel();
+  if (originAddr) showTopRoutes(originAddr);
+  else if (activeCityGroup) showProxyGroup(activeCityGroup);
+  else renderEmptyPanel();
 }
 
 // COLLECTOR_BASE points at a Cloudflare Quick Tunnel HTTPS front for the
@@ -577,8 +612,15 @@ const compareGroup = zoomGroup.append('g');
 const zoom = d3.zoom()
   .scaleExtent([1, 12])
   .on('zoom', (ev) => {
+    currentZoomK = ev.transform.k;
     zoomGroup.attr('transform', ev.transform);
-    nodesGroup.selectAll('circle').attr('r', 2.8 / ev.transform.k);
+    nodesGroup.selectAll('[data-base-r]').attr('r', function () {
+      return Number(this.getAttribute('data-base-r')) / ev.transform.k;
+    });
+    nodesGroup.selectAll('[data-base-font]').attr('font-size', function () {
+      return `${Number(this.getAttribute('data-base-font')) / ev.transform.k}px`;
+    });
+    nodesGroup.selectAll('.spider-line').attr('stroke-width', 0.8 / ev.transform.k);
     edgesGroup.selectAll('line').attr('stroke-width', 1 / ev.transform.k);
   });
 svg.call(zoom);
@@ -587,6 +629,9 @@ let liveData = { nodes: {}, edges: [] };
 let nodeElements = {};
 let originAddr = null;
 let destAddr = null;
+let activeCityGroup = null;
+let cityGroups = new Map();
+let currentZoomK = 1;
 
 document.querySelectorAll('.lang-switch button').forEach(button => {
   button.addEventListener('click', () => setLanguage(button.dataset.lang));
@@ -636,34 +681,74 @@ async function fetchLiveSnapshot() {
 }
 
 function renderMap(data) {
+  const activeCityKey = activeCityGroup?.key;
   liveData = data;
   edgesGroup.selectAll('*').remove();
   nodesGroup.selectAll('*').remove();
   nodeElements = {};
+  activeCityGroup = null;
 
   // No background edges drawn here on purpose: showing every node's top-8
   // links at once turned the map into a solid mesh of lines regardless of
   // selection. Connections only appear once a proxy is clicked, scoped to
   // that proxy's top-10 ranked destinations (drawTopRoutes/drawSingleRoute).
 
-  let i = 0;
+  const groups = new Map();
   for (const [addr, info] of Object.entries(data.nodes)) {
-    const p = projection([info.lon, info.lat]);
+    const cityKey = (info.city || '').trim().toLowerCase();
+    const key = cityKey
+      ? `${cityKey}|${info.country_code}`
+      : `${Number(info.lat).toFixed(3)}|${Number(info.lon).toFixed(3)}`;
+    if (!groups.has(key)) groups.set(key, { key, city: info.city, countryCode: info.country_code, proxies: [], lat: 0, lon: 0 });
+    const group = groups.get(key);
+    group.proxies.push({ addr, info });
+    group.lat += Number(info.lat);
+    group.lon += Number(info.lon);
+  }
+  cityGroups = groups;
+
+  let i = 0;
+  for (const group of groups.values()) {
+    group.lat /= group.proxies.length;
+    group.lon /= group.proxies.length;
+    const p = projection([group.lon, group.lat]);
     if (!p) continue;
-    const isPinned = PINNED_PROXIES.has(addr);
+    group.point = p;
+    const isCluster = group.proxies.length > 1;
+    const isPinned = group.proxies.some(proxy => PINNED_PROXIES.has(proxy.addr));
+    const baseRadius = isCluster ? 8 : (isPinned ? 4 : 2.8);
     const circle = nodesGroup.append('circle')
       .attr('cx', p[0]).attr('cy', p[1])
-      .attr('r', isPinned ? 4 : 2.8)
-      .attr('class', `node live${isPinned ? ' pinned' : ''}`)
-      .attr('data-addr', addr)
-      .attr('aria-label', `${addr} — ${info.city}, ${info.country_code}`)
+      .attr('r', baseRadius / currentZoomK)
+      .attr('data-base-r', baseRadius)
+      .attr('class', `${isCluster ? 'node cluster-ring' : 'node live'}${isPinned ? ' pinned' : ''}`)
+      .attr('data-city-key', group.key)
+      .attr('aria-label', isCluster
+        ? `${group.city}, ${group.countryCode} — ${tr('proxyCount', group.proxies.length)}`
+        : `${group.proxies[0].addr} — ${group.city}, ${group.countryCode}`)
       .style('--pulse-delay', `${(i % 12) * 0.18}s`)
-      .attr('fill', isPinned ? cssVar('--warn') : cssVar('--accent'))
-      .on('click', () => selectNode(addr))
-      .on('touchend', (ev) => { ev.preventDefault(); selectNode(addr); });
-    nodeElements[addr] = circle;
+      .attr('fill', isPinned && !isCluster ? cssVar('--warn') : cssVar('--accent'))
+      .on('click', (ev) => {
+        ev.stopPropagation();
+        if (isCluster) showProxyGroup(group); else selectNode(group.proxies[0].addr);
+      })
+      .on('touchend', (ev) => {
+        ev.preventDefault(); ev.stopPropagation();
+        if (isCluster) showProxyGroup(group); else selectNode(group.proxies[0].addr);
+      });
+    if (group.proxies.some(proxy => proxy.addr === originAddr)) circle.classed('selected', true);
+    if (isCluster) {
+      nodesGroup.append('text')
+        .attr('x', p[0]).attr('y', p[1])
+        .attr('class', 'city-count')
+        .attr('data-base-font', 7)
+        .attr('font-size', `${7 / currentZoomK}px`)
+        .text(group.proxies.length);
+    }
+    for (const proxy of group.proxies) nodeElements[proxy.addr] = circle;
     i++;
   }
+  if (activeCityKey && groups.has(activeCityKey)) showProxyGroup(groups.get(activeCityKey));
 
   document.getElementById('stat-nodes').textContent = Object.keys(data.nodes).length;
   document.getElementById('stat-edges').textContent = data.edges.length;
@@ -704,9 +789,82 @@ setInterval(async () => {
 }, 20000);
 setInterval(() => updateAge(liveData.lastCollectedAt), 5000);
 
+function clearCityGroup() {
+  if (activeCityGroup) {
+    for (const proxy of activeCityGroup.proxies) nodeElements[proxy.addr]?.classed('selected', false);
+  }
+  nodesGroup.selectAll('.spider-layer').remove();
+  activeCityGroup = null;
+}
+
+function drawSpider(group) {
+  nodesGroup.selectAll('.spider-layer').remove();
+  const layer = nodesGroup.append('g').attr('class', 'spider-layer');
+  const [cx, cy] = group.point;
+  const count = group.proxies.length;
+
+  group.proxies.forEach((proxy, index) => {
+    const ring = Math.floor(index / 12);
+    const ringStart = ring * 12;
+    const ringCount = Math.min(12, count - ringStart);
+    const angle = -Math.PI / 2 + ((index - ringStart) * Math.PI * 2 / ringCount);
+    const radius = (28 + ring * 18) / currentZoomK;
+    const x = cx + Math.cos(angle) * radius;
+    const y = cy + Math.sin(angle) * radius;
+
+    layer.append('line')
+      .attr('class', 'spider-line')
+      .attr('x1', cx).attr('y1', cy).attr('x2', x).attr('y2', y)
+      .attr('stroke-width', 0.8 / currentZoomK);
+    const proxyCircle = layer.append('circle')
+      .attr('class', 'spider-node')
+      .attr('cx', x).attr('cy', y)
+      .attr('r', 7 / currentZoomK)
+      .attr('data-base-r', 7)
+      .attr('data-addr', proxy.addr)
+      .attr('aria-label', `${index + 1}. ${proxy.info.hostname || tr('noHostname')} — ${proxy.addr}`)
+      .on('click', (ev) => { ev.stopPropagation(); selectNode(proxy.addr); })
+      .on('touchend', (ev) => { ev.preventDefault(); ev.stopPropagation(); selectNode(proxy.addr); });
+    proxyCircle.append('title').text(`${proxy.info.hostname || tr('noHostname')} — ${proxy.addr}`);
+    layer.append('text')
+      .attr('class', 'spider-number')
+      .attr('x', x).attr('y', y)
+      .attr('data-base-font', 7)
+      .attr('font-size', `${7 / currentZoomK}px`)
+      .text(index + 1);
+  });
+}
+
+function showProxyGroup(group) {
+  if (originAddr && nodeElements[originAddr]) nodeElements[originAddr].classed('selected', false);
+  originAddr = null;
+  destAddr = null;
+  activeCityGroup = group;
+  for (const proxy of group.proxies) nodeElements[proxy.addr]?.classed('selected', true);
+  compareGroup.selectAll('*').remove();
+  drawSpider(group);
+
+  let html = `<h2>${tr('proxiesIn', `${group.city}, ${group.countryCode}`)}</h2>
+    <p class="empty-hint">${tr('chooseProxy')}</p>
+    <div class="proxy-choice-list">`;
+  group.proxies.forEach((proxy, index) => {
+    html += `<button type="button" class="proxy-choice" data-addr="${proxy.addr}">
+      <span class="proxy-index">${index + 1}</span>
+      <span><span class="proxy-host">${proxy.info.hostname || tr('noHostname')}</span><span class="proxy-addr">${proxy.addr}</span></span>
+    </button>`;
+  });
+  html += `</div>`;
+  document.getElementById('panel').innerHTML = html;
+  document.getElementById('panel').classList.add('open');
+  document.querySelectorAll('.proxy-choice').forEach(button => {
+    button.addEventListener('click', () => selectNode(button.dataset.addr));
+  });
+}
+
 function selectNode(addr) {
   if (originAddr && nodeElements[originAddr]) nodeElements[originAddr].classed('selected', false);
   if (destAddr && nodeElements[destAddr]) nodeElements[destAddr].classed('selected', false);
+  clearCityGroup();
   originAddr = addr;
   destAddr = null;
   compareGroup.selectAll('*').remove();
@@ -714,6 +872,12 @@ function selectNode(addr) {
   showTopRoutes(addr);
   document.getElementById('panel').classList.add('open');
 }
+
+svg.on('click.cluster-dismiss', () => {
+  if (!activeCityGroup) return;
+  clearCityGroup();
+  renderEmptyPanel();
+});
 
 // The actual point of the tool: for the selected proxy, which OTHER
 // proxies is it fastest to reach, and via what path? Ranks all known
