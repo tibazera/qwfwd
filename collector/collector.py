@@ -77,6 +77,7 @@ PROBE_TIMEOUT = 1.0
 MAX_WORKERS = 64
 RECOLLECT_INTERVAL_SECONDS = 300
 MESH_MAX_PAGES = 10
+MESH_PAGE_DELAY_SECONDS = 1.05  # qwfwd permits one mesh reply/source/second
 ROUTE_MAX_HOPS = 4
 ROUTE_MAX_EDGE_AGE_SECONDS = 900
 ROUTE_JITTER_WEIGHT = 0.50
@@ -259,6 +260,10 @@ def probe_meshstatus(sock: socket.socket, addr: tuple[str, int]) -> list[protoco
         if next_idx == -1:
             break
         next_index = next_idx
+        # meshstatus pages share qwfwd's anti-amplification rate limiter.
+        # Asking for the next page immediately makes the daemon silently
+        # drop it, leaving the graph with only the first peer block.
+        time.sleep(MESH_PAGE_DELAY_SECONDS)
     return all_blocks
 
 
@@ -273,6 +278,13 @@ def probe_one(addr: tuple[str, int], target_graph: GraphState) -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(PROBE_TIMEOUT)
     try:
+        # Always retain this qwfwd's own direct measurements. meshstatus is
+        # the cache reported by its peers; it complements pingstatus and is
+        # not a replacement for the node's own outbound edges.
+        entries = probe_pingstatus(sock, addr)
+        for ip, port, ping in entries:
+            target_graph.add_edge(addr, Edge(ip, port, float(ping), source="pingstatus"))
+
         mesh_blocks = probe_meshstatus(sock, addr)
         if mesh_blocks is not None:
             with target_graph.lock:
@@ -286,16 +298,6 @@ def probe_one(addr: tuple[str, int], target_graph: GraphState) -> None:
                              hop.loss_pct, source="meshstatus",
                              age_seconds=max(0, block.age)),
                     )
-            if mesh_blocks:
-                return  # mesh-capable node gave us richer data, no need for pingstatus too
-            # mesh-capable but its peer cache is still empty (daemon just
-            # started, hasn't accumulated mesh peers yet) - fall through to
-            # pingstatus so the node still gets edges in the meantime.
-
-        # fallback: legacy pingstatus, ping-only, no jitter/loss
-        entries = probe_pingstatus(sock, addr)
-        for ip, port, ping in entries:
-            target_graph.add_edge(addr, Edge(ip, port, float(ping), source="pingstatus"))
     finally:
         sock.close()
 
