@@ -496,6 +496,14 @@ const PINNED_GEO = {
   '140.235.125.12:30503': { country_code: 'US', country: 'United States', region: 'North America', city: 'Miami', lat: 25.7617, lon: -80.1918, hostname: 'qwfwd-mesh-test (Miami)', is_proxy: true },
   '201.23.3.62:30504': { country_code: 'BR', country: 'Brazil', region: 'South America', city: 'Fortaleza', lat: -3.7319, lon: -38.5267, hostname: 'qwfwd-mesh-test (Fortaleza)', is_proxy: true },
 };
+const OPERATOR_GEO_BY_IP = Object.fromEntries(
+  Object.entries(PINNED_GEO).map(([addr, info]) => [addr.split(':')[0], info])
+);
+function confirmedGeo(addr, current) {
+  const confirmed = OPERATOR_GEO_BY_IP[addr.split(':')[0]];
+  if (!confirmed) return current;
+  return { ...current, ...confirmed, hostname: current?.hostname || confirmed.hostname };
+}
 
 function pingClass(ms) {
   if (ms < 40) return 'good';
@@ -597,7 +605,9 @@ async function fetchLiveSnapshot() {
   const geoResp = await fetch(`${COLLECTOR_BASE}/geo`, { cache: 'no-store' });
   const geo = geoResp.ok ? await geoResp.json() : {};
   // Operator-confirmed locations take precedence over fallible public IP
-  // geolocation (201.23.3.62 is Fortaleza, not Franca).
+  // geolocation on every port (201.23.3.62 is Fortaleza, not Franca).
+  for (const [addr, info] of Object.entries(geo)) geo[addr] = confirmedGeo(addr, info);
+  // Isolated test ports also get their known hostname when absent upstream.
   Object.assign(geo, PINNED_GEO);
 
   const nodes = {};
@@ -736,17 +746,18 @@ async function showTopRoutes(addr) {
 
 function renderTopRoutes(addr, result) {
   const routes = result.top_routes || [];
-  result.from_geo = PINNED_GEO[addr] || result.from_geo;
+  result.from_geo = confirmedGeo(addr, result.from_geo);
   for (const route of routes) {
-    route.to_geo = PINNED_GEO[route.to] || route.to_geo;
+    route.to_geo = confirmedGeo(route.to, route.to_geo);
     if (route.path && route.path_geo) {
-      route.path_geo = route.path.map((pathAddr, i) => PINNED_GEO[pathAddr] || route.path_geo[i]);
+      route.path_geo = route.path.map((pathAddr, i) => confirmedGeo(pathAddr, route.path_geo[i]));
     }
   }
   let html = `
     <div class="node-card">
       <div class="place">${result.from_geo ? result.from_geo.city + ', ' + result.from_geo.country_code : tr('origin')}</div>
       <div class="addr">${addr}</div>
+      <div class="host">${result.from_geo?.hostname || tr('noHostname')}</div>
     </div>
     <h2>Top ${routes.length} ${tr('destinations')} <span style="text-transform:none;letter-spacing:0">&middot; ${result.total_known_destinations} ${tr('known')}</span></h2>
   `;
@@ -774,7 +785,8 @@ function renderTopRoutes(addr, result) {
       const hopLine = r.hops > 1 && r.path && r.path_geo
         ? r.path.slice(1).map((addrStr, i) => {
             const g = r.path_geo[i + 1];
-            const label = g ? `${addrStr} (${g.city}, ${g.country_code})` : addrStr;
+            const serverName = g?.hostname ? ` — ${g.hostname}` : '';
+            const label = g ? `${addrStr} (${g.city}, ${g.country_code}${serverName})` : addrStr;
             return `<span class="hop-entry">${label}</span>`;
           }).join('<span class="hop-arrow" aria-hidden="true">&rarr;</span>')
         : '';
