@@ -77,6 +77,11 @@ PROBE_TIMEOUT = 1.0
 MAX_WORKERS = 64
 RECOLLECT_INTERVAL_SECONDS = 300
 MESH_MAX_PAGES = 10
+ROUTE_MAX_HOPS = 4
+ROUTE_MAX_EDGE_AGE_SECONDS = 900
+ROUTE_JITTER_WEIGHT = 0.50
+ROUTE_LOSS_WEIGHT_MS = 2.0
+ROUTE_RELAY_PENALTY_MS = 3.0
 
 
 @dataclass
@@ -87,6 +92,7 @@ class Edge:
     jitter: int | None = None
     loss_pct: int | None = None
     source: str = "unknown"  # "meshstatus" | "pingstatus"
+    age_seconds: int = 0
 
 
 @dataclass
@@ -150,6 +156,7 @@ class GraphState:
                         "jitter": e.jitter,
                         "loss_pct": e.loss_pct,
                         "source": e.source,
+                        "age_seconds": e.age_seconds,
                     }
                     for e in sorted(edges, key=lambda e: e.ping)[:top_n]
                 ]
@@ -262,19 +269,22 @@ def probe_pingstatus(sock: socket.socket, addr: tuple[str, int]) -> list[tuple[s
     return protocol.parse_pingstatus_reply(reply)
 
 
-def probe_one(addr: tuple[str, int]) -> None:
+def probe_one(addr: tuple[str, int], target_graph: GraphState) -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(PROBE_TIMEOUT)
     try:
         mesh_blocks = probe_meshstatus(sock, addr)
         if mesh_blocks is not None:
-            graph.mesh_capable.add(addr)
+            with target_graph.lock:
+                target_graph.mesh_capable.add(addr)
             for block in mesh_blocks:
                 peer_addr = (block.peer_ip, block.peer_port)
                 for hop in block.hops:
-                    graph.add_edge(
+                    target_graph.add_edge(
                         peer_addr,
-                        Edge(hop.ip, hop.port, float(hop.ping), hop.jitter, hop.loss_pct, source="meshstatus"),
+                        Edge(hop.ip, hop.port, float(hop.ping), hop.jitter,
+                             hop.loss_pct, source="meshstatus",
+                             age_seconds=max(0, block.age)),
                     )
             if mesh_blocks:
                 return  # mesh-capable node gave us richer data, no need for pingstatus too
@@ -285,24 +295,46 @@ def probe_one(addr: tuple[str, int]) -> None:
         # fallback: legacy pingstatus, ping-only, no jitter/loss
         entries = probe_pingstatus(sock, addr)
         for ip, port, ping in entries:
-            graph.add_edge(addr, Edge(ip, port, float(ping), source="pingstatus"))
+            target_graph.add_edge(addr, Edge(ip, port, float(ping), source="pingstatus"))
     finally:
         sock.close()
 
 
 def collect_once() -> None:
     servers = discover_servers()
+    next_graph = GraphState()
 
     qw_data_entries = fetch_qw_data_servers()
-    with graph.lock:
+    with next_graph.lock:
         for addr, geo_info in qw_data_entries:
-            graph.geo[addr] = geo_info
+            next_graph.geo[addr] = geo_info
+        # A physical host keeps the same location on every qwfwd port.
+        # Apply our operator-confirmed datacenter coordinates by IP while
+        # preserving the production instance's own hostname and proxy flag.
+        operator_geo_by_ip = {ip: info for (ip, _port), info in PINNED_PROXY_GEO.items()}
+        for addr, current in list(next_graph.geo.items()):
+            confirmed = operator_geo_by_ip.get(addr[0])
+            if confirmed is not None:
+                next_graph.geo[addr] = GeoInfo(
+                    confirmed.country_code,
+                    confirmed.country,
+                    confirmed.region,
+                    confirmed.city,
+                    confirmed.lat,
+                    confirmed.lon,
+                    current.hostname or confirmed.hostname,
+                    current.is_proxy,
+                )
         # our own pinned test proxies use isolated ports (305xx) qw-data
         # has never heard of - give them known-real coordinates directly so
         # they still show up on the map even though no third-party source
         # lists them.
         for addr, geo_info in PINNED_PROXY_GEO.items():
-            graph.geo.setdefault(addr, geo_info)
+            # These are operator-confirmed datacenter locations and must
+            # override third-party IP geolocation.  In particular,
+            # 201.23.3.62 is physically in Fortaleza even though qw-data's
+            # IP database currently reports Franca.
+            next_graph.geo[addr] = geo_info
 
     # combine both discovery sources: master-reported servers (authoritative
     # for "is it alive right now") plus qw-data proxy entries (may include
@@ -321,15 +353,23 @@ def collect_once() -> None:
     )
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-        futures = [pool.submit(probe_one, addr) for addr in candidates]
+        futures = [pool.submit(probe_one, addr, next_graph) for addr in candidates]
         for f in as_completed(futures):
             f.result()  # propagate exceptions instead of swallowing them silently
 
-    graph.last_collected_at = time.time()
-    total_edges = sum(len(v) for v in graph.edges.values())
+    next_graph.last_collected_at = time.time()
+    # Publish one complete collection atomically.  Readers never see a
+    # half-rebuilt graph and edges which disappeared this cycle cannot live
+    # forever as phantom routes.
+    with graph.lock, next_graph.lock:
+        graph.edges = next_graph.edges
+        graph.mesh_capable = next_graph.mesh_capable
+        graph.geo = next_graph.geo
+        graph.last_collected_at = next_graph.last_collected_at
+    total_edges = sum(len(v) for v in next_graph.edges.values())
     print(
-        f"[collector] cycle done: {len(graph.edges)} nodes, {total_edges} edges, "
-        f"{len(graph.mesh_capable)} mesh-capable, {len(graph.geo)} with known coordinates"
+        f"[collector] cycle done: {len(next_graph.edges)} nodes, {total_edges} edges, "
+        f"{len(next_graph.mesh_capable)} mesh-capable, {len(next_graph.geo)} with known coordinates"
     )
 
 
@@ -347,41 +387,62 @@ def dijkstra(start: tuple[str, int], end: tuple[str, int]) -> tuple[float, list[
         # snapshot the adjacency under lock, then run Dijkstra lock-free
         adjacency = {k: list(v) for k, v in graph.edges.items()}
 
-    dist: dict[tuple[str, int], float] = {start: 0.0}
-    prev: dict[tuple[str, int], tuple[str, int]] = {}
-    visited: set[tuple[str, int]] = set()
-    pq: list[tuple[float, tuple[str, int]]] = [(0.0, start)]
+    # Keep hop count in the state: the cheapest way to reach a node with
+    # four hops is not interchangeable with a slightly costlier one that
+    # still has room for another relay.  The returned number remains raw
+    # RTT sum for UI compatibility; the queue uses a quality-aware cost.
+    start_state = (start, 0)
+    dist: dict[tuple[tuple[str, int], int], float] = {start_state: 0.0}
+    raw_ping: dict[tuple[tuple[str, int], int], float] = {start_state: 0.0}
+    prev: dict[tuple[tuple[str, int], int], tuple[tuple[str, int], int]] = {}
+    visited: set[tuple[tuple[str, int], int]] = set()
+    pq: list[tuple[float, tuple[str, int], int]] = [(0.0, start, 0)]
+    end_state: tuple[tuple[str, int], int] | None = None
 
     while pq:
-        d, node = heapq.heappop(pq)
-        if node in visited:
+        d, node, hops = heapq.heappop(pq)
+        state = (node, hops)
+        if state in visited:
             continue
-        visited.add(node)
+        visited.add(state)
         if node == end:
+            end_state = state
             break
+        if hops >= ROUTE_MAX_HOPS:
+            continue
         for edge in adjacency.get(node, []):
-            neighbor = (edge.to_ip, edge.to_port)
-            if neighbor in visited:
+            if edge.age_seconds > ROUTE_MAX_EDGE_AGE_SECONDS:
                 continue
-            nd = d + edge.ping
-            if neighbor not in dist or nd < dist[neighbor]:
-                dist[neighbor] = nd
-                prev[neighbor] = node
-                heapq.heappush(pq, (nd, neighbor))
+            neighbor = (edge.to_ip, edge.to_port)
+            next_state = (neighbor, hops + 1)
+            jitter = float(edge.jitter or 0)
+            loss = float(edge.loss_pct or 0)
+            edge_cost = (edge.ping + ROUTE_JITTER_WEIGHT * jitter
+                         + ROUTE_LOSS_WEIGHT_MS * loss)
+            if neighbor != end:
+                edge_cost += ROUTE_RELAY_PENALTY_MS
+            nd = d + edge_cost
+            if next_state not in dist or nd < dist[next_state]:
+                dist[next_state] = nd
+                raw_ping[next_state] = raw_ping[state] + edge.ping
+                prev[next_state] = state
+                heapq.heappush(pq, (nd, neighbor, hops + 1))
 
-    if end not in dist:
+    if end_state is None:
         return None
 
-    path = [end]
-    seen = {end}
-    while path[-1] != start:
-        nxt = prev.get(path[-1])
+    path = [end_state[0]]
+    seen = {end_state}
+    state = end_state
+    while state != start_state:
+        nxt = prev.get(state)
         if nxt is None or nxt in seen:
             return None  # disconnected or cycle guard
         seen.add(nxt)
-        path.append(nxt)
+        path.append(nxt[0])
+        state = nxt
     path.reverse()
-    return dist[end], path
+    return raw_ping[end_state], path
 
 
 def parse_addr_param(value: str) -> tuple[str, int] | None:

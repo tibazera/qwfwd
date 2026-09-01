@@ -27,7 +27,7 @@ import sys
 import threading
 import time
 
-QWFWD_EXE = r"E:\Projetos Linux\qwfwd\build\qwfwd.exe"
+QWFWD_EXE = os.environ.get("QWFWD_EXE", r"E:\Projetos Linux\qwfwd\build\qwfwd.exe")
 HOST = "127.0.0.1"      # where the fake master and the test client bind/query
 IP_A = "127.0.0.2"      # qwfwd instances bind to distinct loopback IPs to
 IP_B = "127.0.0.3"      # dodge the default masters_filter_servers="127.0.0.1"

@@ -12,13 +12,14 @@ de compatibilidade com ezquake).
 Não depende de masters reais nem de internet - roda 100% local e
 determinístico.
 """
+import os
 import socket
 import struct
 import subprocess
 import sys
 import time
 
-QWFWD_EXE = r"E:\Projetos Linux\qwfwd\build\qwfwd.exe"
+QWFWD_EXE = os.environ.get("QWFWD_EXE", r"E:\Projetos Linux\qwfwd\build\qwfwd.exe")
 PORT = 30099
 HOST = "127.0.0.1"
 

@@ -14,13 +14,14 @@ por IP funciona (flood não é respondido 1:1); (4) com stun_enable=0
 Não depende de masters reais nem de internet - roda 100% local e
 determinístico.
 """
+import os
 import socket
 import struct
 import subprocess
 import sys
 import time
 
-QWFWD_EXE = r"E:\Projetos Linux\qwfwd\build\qwfwd.exe"
+QWFWD_EXE = os.environ.get("QWFWD_EXE", r"E:\Projetos Linux\qwfwd\build\qwfwd.exe")
 HOST = "127.0.0.1"
 
 STUN_MAGIC_COOKIE = 0x2112A442

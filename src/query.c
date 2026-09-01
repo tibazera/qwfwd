@@ -1305,6 +1305,13 @@ void QRY_Mesh_HandleReply(void)
 	sv->is_mesh = true;
 	sv->mesh_reply_at = Sys_DoubleTime();
 
+	// A probe reply is a complete snapshot of this peer's current
+	// measurements, not a delta.  Drop entries which disappeared from the
+	// newest reply instead of keeping unroutable/stale edges indefinitely.
+	// Keep the allocated capacity for the next refresh to avoid allocator
+	// churn in this long-running daemon.
+	sv->hop2_count = 0;
+
 	QRY_Mesh_ParsePingStatusPayload(sv, data + 11, (size_t)(len - 11));
 }
 

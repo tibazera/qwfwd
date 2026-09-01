@@ -109,15 +109,24 @@ registrado no histórico de commits da branch (mensagens de commit
   instâncias de teste rodam em `~/qwfwd-mesh-test/`, processos e portas
   totalmente separados.
 
-## Próximos passos (não implementados ainda)
+## Integração implementada
 
-1. Coletor externo: serviço que consulta `meshstatus` de todos os `qwfwd`
-   conhecidos (patcheados e legados via `pingstatus`), monta o grafo
-   mundial, calcula rotas via Dijkstra, e publica uma tabela de rotas que
-   cada `qwfwd` pode cachear localmente (decisão de arquitetura já tomada:
-   o cálculo fica no coletor, não em cada proxy — ver discussão registrada
-   nesta sessão para justificativa completa).
-2. Nonce/cookie real em `meshstatus` para reduzir a superfície de
+- O coletor externo em `collector/` consulta `meshstatus`, usa
+  `pingstatus` como fallback legado e publica rotas direcionadas.
+- Cada ciclo de coleta agora é publicado como um snapshot atômico: arestas
+  que desapareceram não sobrevivem como rotas fantasmas.
+- O cálculo limita caminhos a quatro hops, rejeita arestas mesh com mais de
+  15 minutos e considera ping, jitter, perda e uma pequena penalidade por
+  relay. O RTT exibido continua sendo a soma bruta dos pings.
+- O site/coletor continua consumindo `meshstatus` para observabilidade e
+  validação. O unezQuake não depende de URL ou serviço HTTP externo.
+
+## Próximos passos
+
+1. Nonce/cookie real em `meshstatus` para reduzir a superfície de
    amplificação, se o volume de tráfego justificar.
-3. Ferramenta cliente-side, separada, que consulta a malha para orientar o
-   jogador — fora do escopo deste patch no `qwfwd` em si.
+2. Validar rotas candidatas com tráfego realmente encaminhado durante uma
+   janela curta antes de promovê-las automaticamente acima da rota direta.
+3. Levar a ingestão direta de `meshstatus` para o grafo compartilhado do
+   Server Browser; até isso acontecer, `connectbr` usa somente o ping-tree
+   e a sondagem `pingstatus` local, sem dependência externa.
