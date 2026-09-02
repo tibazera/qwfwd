@@ -196,10 +196,7 @@ svg#map:active { cursor: grabbing; }
 .server-result:hover, .server-result:focus-visible { border-color: var(--accent); outline: none; }
 .server-result strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 11px var(--sans); }
 .server-result small { color: var(--text-dim); font: 9px var(--mono); }
-.server-provider {
-  align-self: start; padding: 2px 5px; border-radius: 4px; color: var(--accent);
-  border: 1px solid var(--accent); font: 700 8px var(--mono); letter-spacing: .05em;
-}
+.server-flag { margin-right: 5px; font-size: 14px; line-height: 1; vertical-align: -1px; }
 .server-result .server-address { grid-column: 1 / -1; color: var(--text-dim); font: 9.5px var(--mono); }
 .nearby-card {
   padding: 11px 12px; border: 1px solid var(--accent); border-radius: 8px;
@@ -555,11 +552,10 @@ function renderEmptyPanel() {
 function escapeHtml(value) {
   return String(value ?? '').replace(/\uFFFD/g, '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 }
-function serverProvider(info) {
-  const name = info?.hostname || '';
-  if (/qlash/i.test(name)) return 'QLASH';
-  if (/\b(quad|ring)\s*@\s*ilha\b/i.test(name)) return 'ILHA';
-  return '';
+function countryFlag(countryCode) {
+  const code = String(countryCode || '').trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(code)) return '🌐';
+  return String.fromCodePoint(...[...code].map(char => 127397 + char.charCodeAt(0)));
 }
 function renderServerSearch(rawQuery) {
   const container = document.getElementById('server-results');
@@ -581,8 +577,7 @@ function renderServerSearch(rawQuery) {
     return;
   }
   container.innerHTML = results.map(([addr, info]) => {
-    const provider = serverProvider(info);
-    return `<button type="button" class="server-result" data-addr="${escapeHtml(addr)}"><strong>${escapeHtml(info.hostname || tr('noHostname'))}</strong>${provider ? `<span class="server-provider">${provider}</span>` : ''}<small>${escapeHtml(`${info.city || '?'}, ${info.country_code || '?'}`)}</small><span class="server-address">${escapeHtml(addr)}</span></button>`;
+    return `<button type="button" class="server-result" data-addr="${escapeHtml(addr)}"><strong><span class="server-flag" aria-hidden="true">${countryFlag(info.country_code)}</span>${escapeHtml(info.hostname || tr('noHostname'))}</strong><small>${escapeHtml(`${info.city || '?'}, ${info.country_code || '?'}`)}</small><span class="server-address">${escapeHtml(addr)}</span></button>`;
   }).join('');
   container.querySelectorAll('.server-result').forEach(button => button.addEventListener('click', () => startNearbyMode(button.dataset.addr)));
 }
@@ -1221,7 +1216,6 @@ function clearCityGroup() {
 
 function sortedCityServers(group) {
   return [...group.proxies].sort((a, b) =>
-    Number(serverProvider(b.info) === 'QLASH') - Number(serverProvider(a.info) === 'QLASH') ||
     (a.info.hostname || a.addr).localeCompare(b.info.hostname || b.addr)
   );
 }
@@ -1279,10 +1273,9 @@ function showProxyGroup(group) {
     <div class="proxy-choice-list">`;
   const sortedServers = sortedCityServers(group);
   sortedServers.forEach((proxy, index) => {
-    const provider = serverProvider(proxy.info);
     html += `<button type="button" class="proxy-choice" data-addr="${proxy.addr}">
       <span class="proxy-index">${index + 1}</span>
-      <span><span class="proxy-host">${escapeHtml(proxy.info.hostname || tr('noHostname'))}${provider ? ` <span class="server-provider">${provider}</span>` : ''}</span><span class="proxy-addr">${escapeHtml(proxy.addr)}</span></span>
+      <span><span class="proxy-host"><span class="server-flag" aria-hidden="true">${countryFlag(proxy.info.country_code)}</span>${escapeHtml(proxy.info.hostname || tr('noHostname'))}</span><span class="proxy-addr">${escapeHtml(proxy.addr)}</span></span>
     </button>`;
   });
   html += `</div>`;
