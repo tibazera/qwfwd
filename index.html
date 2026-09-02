@@ -472,9 +472,9 @@ const I18N = {
     proxiesIn: city => `Proxies em ${city}`, chooseProxy: 'Escolha o proxy exato que deseja usar como origem.', proxyCount: n => `${n} proxies nesta cidade`,
     serversIn: city => `Servidores em ${city}`, chooseServer: 'Escolha o servidor Quake de destino.', serverCount: n => `${n} servidores nesta cidade`,
     nearbyTitle: 'Rota perto de mim', nearbyIntro: 'Use sua localização aproximada para sugerir os melhores proxies de entrada. O mapa atual continua funcionando normalmente.',
-    nearbyButton: 'Encontrar rota perto de mim', nearbyPrivacy: 'Ao continuar, o serviço IPWho.is usará seu IP para estimar cidade e coordenadas. Este site não armazena seu IP.',
-    locating: 'Detectando localização aproximada…', locationFailed: 'Não foi possível detectar sua localização.', retry: 'Tentar novamente',
-    detected: 'Localização aproximada', chooseDestination: 'Digite o endereço do servidor Quake de destino. Os pontos do mapa são proxies qwfwd, não servidores para conectar.',
+    nearbyButton: 'Encontrar minha melhor rota', nearbyPrivacy: 'O navegador pedirá permissão para usar sua localização. Seu IP não será usado para descobrir sua cidade.',
+    locating: 'Aguardando a localização do navegador…', locationFailed: 'Não foi possível obter a localização do navegador.', retry: 'Tentar novamente',
+    detected: 'Localização escolhida', browserLocation: 'Localização do navegador', manualLocation: 'Posição manual', manualInstructions: 'Toque no mapa para marcar de onde você está jogando.', useManualLocation: 'Corrigir localização no mapa', chooseDestination: 'Escolha um servidor no mapa ou digite o endereço do servidor Quake.',
     serverPlaceholder: 'IP:porta do servidor (ex.: 203.0.113.10:27500)', findServerRoute: 'Calcular rota para o servidor', invalidServer: 'Digite um servidor Quake válido no formato IP:porta. Endereços qwfwd e porta 30000 não são destinos de jogo.',
     chooseDestinationProxy: 'Este ponto é um proxy qwfwd e será usado apenas como hop.', cancelNearby: 'Sair do modo perto de mim', calculating: 'Medindo o primeiro hop e calculando rotas…',
     recommendations: 'Rotas recomendadas', basedOn: city => `Estimativa para ${city}`, approximate: 'estimado', measured: 'medido',
@@ -503,9 +503,9 @@ const I18N = {
     proxiesIn: city => `Proxies in ${city}`, chooseProxy: 'Choose the exact proxy you want to use as the origin.', proxyCount: n => `${n} proxies in this city`,
     serversIn: city => `Servers in ${city}`, chooseServer: 'Choose the destination Quake server.', serverCount: n => `${n} servers in this city`,
     nearbyTitle: 'Route near me', nearbyIntro: 'Use your approximate location to suggest the best entry proxies. The current map remains unchanged.',
-    nearbyButton: 'Find a route near me', nearbyPrivacy: 'When you continue, IPWho.is will use your IP to estimate your city and coordinates. This website does not store your IP.',
-    locating: 'Detecting approximate location…', locationFailed: 'Your location could not be detected.', retry: 'Try again',
-    detected: 'Approximate location', chooseDestination: 'Enter the destination Quake server address. Map points are qwfwd proxies, not game servers to connect to.',
+    nearbyButton: 'Find my best route', nearbyPrivacy: 'The browser will ask permission to use your location. Your IP is not used to determine your city.',
+    locating: 'Waiting for browser location…', locationFailed: 'The browser location could not be obtained.', retry: 'Try again',
+    detected: 'Selected location', browserLocation: 'Browser location', manualLocation: 'Manual position', manualInstructions: 'Select your playing location on the map.', useManualLocation: 'Correct location on map', chooseDestination: 'Choose a server on the map or enter its Quake server address.',
     serverPlaceholder: 'server IP:port (e.g. 203.0.113.10:27500)', findServerRoute: 'Calculate route to server', invalidServer: 'Enter a valid Quake server as IP:port. qwfwd addresses and port 30000 are not game destinations.',
     chooseDestinationProxy: 'This point is a qwfwd proxy and is used only as a hop.', cancelNearby: 'Exit nearby mode', calculating: 'Measuring the first hop and calculating routes…',
     recommendations: 'Recommended routes', basedOn: city => `Estimate for ${city}`, approximate: 'estimated', measured: 'measured',
@@ -922,14 +922,20 @@ function renderNearbyState() {
     return;
   }
   if (nearbyMode.phase === 'error') {
-    document.getElementById('panel').innerHTML = `<h2>${tr('nearbyTitle')}</h2><p class="empty-hint">${tr('locationFailed')}</p><button class="btn" id="retry-nearby">${tr('retry')}</button><button class="btn" id="cancel-nearby">${tr('cancelNearby')}</button>`;
+    document.getElementById('panel').innerHTML = `<h2>${tr('nearbyTitle')}</h2><p class="empty-hint">${tr('locationFailed')}</p><button class="btn" id="retry-nearby">${tr('retry')}</button><button class="btn" id="manual-nearby">${tr('useManualLocation')}</button><button class="btn" id="cancel-nearby">${tr('cancelNearby')}</button>`;
     document.getElementById('retry-nearby')?.addEventListener('click', startNearbyMode);
+    document.getElementById('manual-nearby')?.addEventListener('click', startManualLocationMode);
+    document.getElementById('cancel-nearby')?.addEventListener('click', cancelNearbyMode);
+    return;
+  }
+  if (nearbyMode.phase === 'manual') {
+    document.getElementById('panel').innerHTML = `<h2>${tr('nearbyTitle')}</h2><div class="nearby-card"><div class="nearby-title">${tr('manualLocation')}</div><p>${tr('manualInstructions')}</p></div><button class="btn" id="cancel-nearby">${tr('cancelNearby')}</button>`;
     document.getElementById('cancel-nearby')?.addEventListener('click', cancelNearbyMode);
     return;
   }
   if (nearbyMode.phase === 'choosing') {
     const loc = nearbyMode.location;
-    document.getElementById('panel').innerHTML = `<h2>${tr('nearbyTitle')}</h2><div class="nearby-card"><div class="nearby-title">${tr('detected')}</div><p class="nearby-location">${loc.city}, ${loc.region || loc.country}</p><p>${tr('chooseDestination')}</p><form id="nearby-server-form"><input id="nearby-server" autocomplete="off" spellcheck="false" placeholder="${tr('serverPlaceholder')}" style="box-sizing:border-box;width:100%;margin-top:9px;padding:9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font:11px var(--mono)"><button class="btn" type="submit">${tr('findServerRoute')}</button><p id="nearby-server-error" class="empty-hint" style="display:none;color:var(--bad)">${tr('invalidServer')}</p></form></div><p class="empty-hint">${tr('locationDisclaimer')}</p><button class="btn" id="cancel-nearby">${tr('cancelNearby')}</button>`;
+    document.getElementById('panel').innerHTML = `<h2>${tr('nearbyTitle')}</h2><div class="nearby-card"><div class="nearby-title">${tr('detected')}</div><p class="nearby-location">${loc.city}</p><p>${tr('chooseDestination')}</p><form id="nearby-server-form"><input id="nearby-server" autocomplete="off" spellcheck="false" placeholder="${tr('serverPlaceholder')}" style="box-sizing:border-box;width:100%;margin-top:9px;padding:9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font:11px var(--mono)"><button class="btn" type="submit">${tr('findServerRoute')}</button><p id="nearby-server-error" class="empty-hint" style="display:none;color:var(--bad)">${tr('invalidServer')}</p></form><button class="btn" id="manual-nearby">${tr('useManualLocation')}</button></div><p class="empty-hint">${tr('locationDisclaimer')}</p><button class="btn" id="cancel-nearby">${tr('cancelNearby')}</button>`;
     document.getElementById('nearby-server-form')?.addEventListener('submit', event => {
       event.preventDefault();
       const value = document.getElementById('nearby-server').value.trim();
@@ -941,6 +947,7 @@ function renderNearbyState() {
       }
       chooseNearbyDestination(value);
     });
+    document.getElementById('manual-nearby')?.addEventListener('click', startManualLocationMode);
     document.getElementById('cancel-nearby')?.addEventListener('click', cancelNearbyMode);
     drawNearbyLocation();
     return;
@@ -954,18 +961,19 @@ function renderNearbyState() {
 
 async function startNearbyMode(requestedDestination = null) {
   if (typeof requestedDestination !== 'string') requestedDestination = null;
-  nearbyMode = { active: true, phase: 'locating', location: null, destination: null, routes: [] };
+  nearbyMode = { active: true, phase: 'locating', location: null, destination: null, requestedDestination, routes: [] };
   originAddr = null;
   clearCityGroup();
   compareGroup.selectAll('*').remove();
   renderNearbyState();
   try {
-    const response = await fetch('https://ipwho.is/', { cache: 'no-store' });
-    const data = await response.json();
-    if (!response.ok || data.success === false || !Number.isFinite(Number(data.latitude)) || !Number.isFinite(Number(data.longitude))) throw new Error('location unavailable');
+    if (!navigator.geolocation) throw new Error('geolocation unavailable');
+    const position = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject, {
+      enableHighAccuracy: false, timeout: 10000, maximumAge: 300000
+    }));
     nearbyMode.location = {
-      city: data.city || data.region || data.country || '?', region: data.region || '', country: data.country || '',
-      countryCode: data.country_code || '', lat: Number(data.latitude), lon: Number(data.longitude)
+      city: tr('browserLocation'), region: '', country: '', countryCode: '',
+      lat: Number(position.coords.latitude), lon: Number(position.coords.longitude)
     };
     nearbyMode.phase = 'choosing';
     if (requestedDestination) {
@@ -975,6 +983,15 @@ async function startNearbyMode(requestedDestination = null) {
   } catch (error) {
     nearbyMode.phase = 'error';
   }
+  renderNearbyState();
+}
+
+function startManualLocationMode() {
+  nearbyMode.active = true;
+  nearbyMode.phase = 'manual';
+  nearbyMode.location = null;
+  nearbyGroup.selectAll('*').remove();
+  clearCityGroup();
   renderNearbyState();
 }
 
@@ -1191,6 +1208,21 @@ svg.on('click.cluster-dismiss', () => {
   if (!activeCityGroup) return;
   clearCityGroup();
   if (nearbyMode.active) renderNearbyState(); else renderEmptyPanel();
+});
+
+svg.on('click.manual-location', function (event) {
+  if (nearbyMode.phase !== 'manual' || event.defaultPrevented) return;
+  const screenPoint = d3.pointer(event, this);
+  const mapPoint = d3.zoomTransform(this).invert(screenPoint);
+  const coordinates = projection.invert(mapPoint);
+  if (!coordinates) return;
+  nearbyMode.location = {
+    city: tr('manualLocation'), region: '', country: '', countryCode: '',
+    lon: coordinates[0], lat: coordinates[1]
+  };
+  nearbyMode.phase = 'choosing';
+  renderNearbyState();
+  if (nearbyMode.requestedDestination) chooseNearbyDestination(nearbyMode.requestedDestination);
 });
 
 // The actual point of the tool: for the selected proxy, which OTHER
