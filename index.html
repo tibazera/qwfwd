@@ -641,7 +641,20 @@ const OPERATOR_GEO_BY_IP = Object.fromEntries(
 function confirmedGeo(addr, current) {
   const confirmed = OPERATOR_GEO_BY_IP[addr.split(':')[0]];
   if (!confirmed) return current;
-  return { ...current, ...confirmed, hostname: current?.hostname || confirmed.hostname };
+  // Location is shared by services on the same IP, but service type is not:
+  // :30000/:30504 are qwfwd while :28501/:28502 are game servers. Never
+  // copy is_proxy from the pinned qwfwd port to every port on that host.
+  return {
+    ...current,
+    country_code: confirmed.country_code,
+    country: confirmed.country,
+    region: confirmed.region,
+    city: confirmed.city,
+    lat: confirmed.lat,
+    lon: confirmed.lon,
+    hostname: current?.hostname || confirmed.hostname,
+    is_proxy: current?.is_proxy ?? confirmed.is_proxy
+  };
 }
 
 function pingClass(ms) {
