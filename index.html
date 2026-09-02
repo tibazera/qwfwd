@@ -410,6 +410,7 @@ footer {
   color: var(--text-dim);
   flex-shrink: 0;
 }
+#compatibility-note { color: var(--warn); }
 
 @media (max-width: 720px) {
   main { grid-template-columns: 1fr; grid-template-rows: 1fr; }
@@ -479,7 +480,7 @@ footer {
   </aside>
 </main>
 
-<footer id="footer-note">carregando topologia mundial e dados ao vivo do coletor&hellip;</footer>
+<footer><span id="footer-note">carregando topologia mundial e dados ao vivo do coletor&hellip;</span><br><span id="compatibility-note">EZCSQC pode não funcionar em servidores muito antigos; pontos laranja indicam compatibilidade não confirmada.</span></footer>
 
 <script>
 const I18N = {
@@ -602,7 +603,8 @@ function setLanguage(lang) {
   document.getElementById('stat-updated-label').textContent = tr('updated');
   document.getElementById('legend-test').textContent = tr('testServer');
   document.getElementById('hint').textContent = tr('zoom');
-  document.getElementById('footer-note').textContent = liveData.lastCollectedAt ? `${tr('footerLive')} ${tr('compatibilityNote')}` : tr('footerLoading');
+  document.getElementById('footer-note').textContent = liveData.lastCollectedAt ? tr('footerLive') : tr('footerLoading');
+  document.getElementById('compatibility-note').textContent = tr('compatibilityNote');
   document.querySelectorAll('.lang-switch button').forEach(button => button.classList.toggle('active', button.dataset.lang === language));
   if (liveData.lastCollectedAt) {
     document.getElementById('subtitle').textContent = tr('liveSubtitle', Object.keys(liveData.nodes).length, liveData.meshCapableCount || 0);
@@ -936,8 +938,8 @@ async function refreshLoop() {
   try {
     const data = await fetchLiveSnapshot();
     renderMap(data);
-    document.getElementById('footer-note').textContent =
-      `${tr('footerLive')} ${tr('compatibilityNote')}`;
+    document.getElementById('footer-note').textContent = tr('footerLive');
+    document.getElementById('compatibility-note').textContent = tr('compatibilityNote');
   } catch (err) {
     document.getElementById('loading-msg').innerHTML =
       `<div class="spinner"></div>${tr('collectorFail')}<br><span style="opacity:0.7">${err.message}</span>`;
