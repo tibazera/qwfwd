@@ -1004,13 +1004,41 @@ function handleProxySelection(addr) {
   else startNearbyMode(addr);
 }
 
+async function resolveServerAddress(address) {
+  const separator = address.lastIndexOf(':');
+  const host = address.slice(0, separator);
+  const port = address.slice(separator + 1);
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) return address;
+  const response = await fetch(`https://dns.google/resolve?name=${encodeURIComponent(host)}&type=A`, { cache: 'no-store' });
+  if (!response.ok) throw new Error(`DNS returned ${response.status}`);
+  const data = await response.json();
+  const answer = (data.Answer || []).find(item => item.type === 1 && /^\d{1,3}(?:\.\d{1,3}){3}$/.test(item.data));
+  if (!answer) throw new Error('hostname has no IPv4 address');
+  return `${answer.data}:${port}`;
+}
+
 async function chooseNearbyDestination(destination) {
   clearCityGroup();
-  nearbyMode.destination = destination;
+  const requestedDestination = destination;
+  nearbyMode.destination = requestedDestination;
   nearbyMode.phase = 'calculating';
   renderNearbyState();
 
-  const candidates = nearbyEntryCandidates(nearbyMode.location, destination);
+  try {
+    nearbyMode.destination = await resolveServerAddress(requestedDestination);
+    if (liveData.proxies?.[nearbyMode.destination] || Number(nearbyMode.destination.slice(nearbyMode.destination.lastIndexOf(':') + 1)) === 30000)
+      throw new Error('destination is a qwfwd proxy');
+    nearbyMode.connectAddress = requestedDestination;
+  } catch (error) {
+    nearbyMode.destination = requestedDestination;
+    nearbyMode.connectAddress = requestedDestination;
+    nearbyMode.routes = [];
+    nearbyMode.phase = 'results';
+    renderNearbyState();
+    return;
+  }
+
+  const candidates = nearbyEntryCandidates(nearbyMode.location, nearbyMode.destination);
 
   try {
     const measuredRtts = new Map();
@@ -1049,7 +1077,8 @@ function renderNearbyResults() {
     routes.forEach((route, index) => {
       const entryGeo = route.candidate.info;
       const chain = route.path.slice(0, -1).join('@');
-      const command = chain ? `cl_proxyaddr ${chain}; connect ${nearbyMode.destination}` : `connect ${nearbyMode.destination}`;
+      const connectAddress = nearbyMode.connectAddress || nearbyMode.destination;
+      const command = chain ? `cl_proxyaddr ${chain}; connect ${connectAddress}` : `connect ${connectAddress}`;
       const hopLine = route.path.map((pathAddr, i) => {
         const geo = route.path_geo?.[i];
         const place = geo ? `${geo.city}, ${geo.country_code}` : pathAddr;
