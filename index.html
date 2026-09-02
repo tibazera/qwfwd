@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<title>Malha Mundial qwfwd</title>
+<title>QW Route Finder</title>
 <meta charset="utf-8">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
@@ -109,6 +109,7 @@ header .stat {
   color: var(--text-dim);
 }
 header .stat b { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 600; }
+.internal-stat { display: none !important; }
 .lang-switch { display: flex; gap: 4px; margin-left: 4px; }
 .lang-switch button {
   font: 600 9px var(--mono); color: var(--text-dim); background: transparent;
@@ -119,7 +120,7 @@ header .stat b { color: var(--text); font-variant-numeric: tabular-nums; font-we
 main {
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr 300px;
+  grid-template-columns: 1fr 360px;
   overflow: hidden;
   min-height: 0;
   position: relative;
@@ -135,7 +136,7 @@ svg#map:active { cursor: grabbing; }
   stroke: var(--bg);
   stroke-width: 1;
 }
-.node.live { animation: pulse 2.4s ease-in-out infinite; animation-delay: var(--pulse-delay, 0s); }
+.node.live { animation: none; }
 .node:hover { stroke: var(--accent); stroke-width: 2; }
 .node.selected { stroke: var(--accent); stroke-width: 2.5; }
 .node.pinned { stroke: var(--warn); stroke-width: 1.6; }
@@ -171,6 +172,35 @@ svg#map:active { cursor: grabbing; }
 }
 .proxy-choice .proxy-host { display: block; font-size: 11.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .proxy-choice .proxy-addr { display: block; margin-top: 2px; color: var(--text-dim); font: 9.5px var(--mono); }
+.server-finder {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 92%, var(--accent) 8%);
+}
+.server-finder label {
+  display: block; margin-bottom: 7px; color: var(--text);
+  font: 700 10px var(--mono); letter-spacing: .07em; text-transform: uppercase;
+}
+.server-search {
+  width: 100%; padding: 10px 11px; border: 1px solid var(--border); border-radius: 7px;
+  background: var(--surface); color: var(--text); font: 11px var(--mono); outline: none;
+}
+.server-search:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+.server-results { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+.server-result {
+  display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; width: 100%;
+  padding: 9px 10px; border: 1px solid var(--border); border-radius: 7px;
+  background: var(--surface); color: var(--text); text-align: left; cursor: pointer;
+}
+.server-result:hover, .server-result:focus-visible { border-color: var(--accent); outline: none; }
+.server-result strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 11px var(--sans); }
+.server-result small { color: var(--text-dim); font: 9px var(--mono); }
+.server-provider {
+  align-self: start; padding: 2px 5px; border-radius: 4px; color: var(--accent);
+  border: 1px solid var(--accent); font: 700 8px var(--mono); letter-spacing: .05em;
+}
+.server-result .server-address { grid-column: 1 / -1; color: var(--text-dim); font: 9.5px var(--mono); }
 .nearby-card {
   padding: 11px 12px; border: 1px solid var(--accent); border-radius: 8px;
   background: var(--accent-glow);
@@ -413,7 +443,7 @@ footer {
   <span class="sub" id="subtitle">conectando ao coletor...</span>
   <div class="stat">
     <span><span id="stat-proxies-label">proxies</span> <b id="stat-nodes">&mdash;</b></span>
-    <span><span id="stat-edges-label">arestas</span> <b id="stat-edges">&mdash;</b></span>
+    <span class="internal-stat"><span id="stat-edges-label">arestas</span> <b id="stat-edges">&mdash;</b></span>
     <span><span id="stat-updated-label">atualizado</span> <b id="stat-age">&mdash;</b></span>
   </div>
   <div class="lang-switch" aria-label="Language">
@@ -451,7 +481,7 @@ footer {
 <script>
 const I18N = {
   pt: {
-    title: 'Malha Mundial qwfwd', brand: 'qwfwd — malha mundial', connecting: 'conectando ao coletor...',
+    title: 'QW Route Finder', brand: 'qwfwd route finder', connecting: 'conectando ao coletor...',
     proxies: 'proxies', servers: 'servidores', edges: 'rotas internas', updated: 'atualizado', loading: 'consultando o coletor ao vivo',
     testServer: 'servidor Quake', zoom: 'arraste / pinça pra zoom', details: 'Detalhes',
     intro: 'Toque em um servidor Quake para calcular sua melhor rota. A malha qwfwd trabalha por trás e fica escondida.',
@@ -459,11 +489,12 @@ const I18N = {
     footerLoading: 'carregando topologia mundial e dados ao vivo do coletor…',
     liveSubtitle: (n, m) => `${n} servidores Quake · ${m} proxies com medição mesh completa`,
     agoSec: n => `${n}s atrás`, agoMin: n => `${n}min atrás`,
-    footerLive: 'Mapa ao vivo: dados frescos do coletor a cada 20s. Toque em dois proxies pra comparar rota direta (vermelha) vs. via malha (verde). Mapa base: Natural Earth.',
+    footerLive: 'Servidores atualizados a cada 20s. Escolha um destino; a malha qwfwd calcula a rota por trás. Mapa base: Natural Earth.',
     collectorFail: 'não consegui falar com o coletor', selected: 'Origem selecionada', test: 'Servidor de teste',
     noHostname: '(sem hostname)', topTen: 'Top 10 melhores destinos', querying: 'consultando o coletor ao vivo',
     collectorError: e => `Não consegui falar com o coletor (${e}).`, origin: 'Origem', destinations: 'destinos', known: 'conhecidos',
     noRoutes: 'Ainda sem rotas medidas a partir deste proxy.', hops: 'hops', copyProxy: 'copiar cl_proxyaddr', copyConnect: 'copiar connect',
+    findServer: 'Encontrar servidor', searchServer: 'Nome, cidade, IP ou porta…', searchHint: 'Digite pelo menos 2 caracteres. Ex.: QLASH, Miami ou 28501.', noServerMatch: 'Nenhum servidor encontrado com esse termo.',
     clear: 'Limpar seleção', copied: 'copiado!', copyError: 'erro ao copiar'
     , comparing: 'Comparando rotas...', error: 'Erro', comparison: 'Comparação de rotas', direct: 'Direto (linha vermelha)',
     noProxy: 'sem proxy', noDirect: 'Sem medição direta conhecida entre esses dois pontos.', mesh: 'Via malha (linha verde)',
@@ -482,7 +513,7 @@ const I18N = {
     stunMeasured: 'medido via STUN', copyRoute: 'copiar rota', copyHops: 'copiar somente hops', changeDestination: 'Escolher outro servidor', locationDisclaimer: 'O site tenta medir seu RTT real até proxies com STUN; nos demais usa uma estimativa geográfica claramente identificada.'
   },
   en: {
-    title: 'qwfwd Worldwide Mesh', brand: 'qwfwd — worldwide mesh', connecting: 'connecting to collector...',
+    title: 'QW Route Finder', brand: 'qwfwd route finder', connecting: 'connecting to collector...',
     proxies: 'proxies', servers: 'servers', edges: 'internal routes', updated: 'updated', loading: 'querying live collector',
     testServer: 'Quake server', zoom: 'drag / pinch to zoom', details: 'Details',
     intro: 'Select a Quake server to calculate your best route. The qwfwd mesh works behind the scenes and stays hidden.',
@@ -490,11 +521,12 @@ const I18N = {
     footerLoading: 'loading worldwide topology and live collector data…',
     liveSubtitle: (n, m) => `${n} Quake servers · ${m} proxies with complete mesh measurements`,
     agoSec: n => `${n}s ago`, agoMin: n => `${n}min ago`,
-    footerLive: 'Live map: fresh collector data every 20s. Select two proxies to compare direct (red) vs. mesh (green) routes. Base map: Natural Earth.',
+    footerLive: 'Servers refresh every 20s. Choose a destination; the qwfwd mesh calculates the route behind the scenes. Base map: Natural Earth.',
     collectorFail: 'could not reach the collector', selected: 'Selected origin', test: 'Test server',
     noHostname: '(no hostname)', topTen: 'Top 10 best destinations', querying: 'querying live collector',
     collectorError: e => `Could not reach the collector (${e}).`, origin: 'Origin', destinations: 'destinations', known: 'known',
     noRoutes: 'No measured routes from this proxy yet.', hops: 'hops', copyProxy: 'copy cl_proxyaddr', copyConnect: 'copy connect',
+    findServer: 'Find a server', searchServer: 'Name, city, IP or port…', searchHint: 'Enter at least 2 characters. Example: QLASH, Miami or 28501.', noServerMatch: 'No server matches this search.',
     clear: 'Clear selection', copied: 'copied!', copyError: 'copy failed'
     , comparing: 'Comparing routes...', error: 'Error', comparison: 'Route comparison', direct: 'Direct (red line)',
     noProxy: 'no proxy', noDirect: 'No known direct measurement between these points.', mesh: 'Via mesh (green line)',
@@ -516,8 +548,43 @@ const I18N = {
 let language = localStorage.getItem('qwfwd-language') || (navigator.language.toLowerCase().startsWith('pt') ? 'pt' : 'en');
 function tr(key, ...args) { const value = I18N[language][key]; return typeof value === 'function' ? value(...args) : value; }
 function renderEmptyPanel() {
-  document.getElementById('panel').innerHTML = `<div class="nearby-card"><div class="nearby-title">${tr('nearbyTitle')}</div><p>${tr('nearbyIntro')}</p><button type="button" class="btn" id="start-nearby">${tr('nearbyButton')}</button></div><h2>${tr('details')}</h2><p class="empty-hint">${tr('intro')}</p><p class="empty-hint" style="border-top:1px solid var(--border);padding-top:10px">${tr('note')}</p>`;
+  document.getElementById('panel').innerHTML = `<div class="server-finder"><label for="server-search">${tr('findServer')}</label><input class="server-search" id="server-search" autocomplete="off" spellcheck="false" placeholder="${tr('searchServer')}"><div class="server-results" id="server-results"><p class="empty-hint">${tr('searchHint')}</p></div></div><div class="nearby-card"><div class="nearby-title">${tr('nearbyTitle')}</div><p>${tr('nearbyIntro')}</p><button type="button" class="btn" id="start-nearby">${tr('nearbyButton')}</button></div><p class="empty-hint">${tr('intro')}</p><p class="empty-hint" style="border-top:1px solid var(--border);padding-top:10px">${tr('note')}</p>`;
+  document.getElementById('server-search')?.addEventListener('input', event => renderServerSearch(event.target.value));
   document.getElementById('start-nearby')?.addEventListener('click', startNearbyMode);
+}
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+}
+function serverProvider(info) {
+  const name = info?.hostname || '';
+  if (/qlash/i.test(name)) return 'QLASH';
+  if (/\b(quad|ring)\s*@\s*ilha\b/i.test(name)) return 'ILHA';
+  return '';
+}
+function renderServerSearch(rawQuery) {
+  const container = document.getElementById('server-results');
+  if (!container) return;
+  const query = rawQuery.trim().toLowerCase();
+  if (query.length < 2) {
+    container.innerHTML = `<p class="empty-hint">${tr('searchHint')}</p>`;
+    return;
+  }
+  const results = Object.entries(liveData.nodes || {}).filter(([addr, info]) =>
+    `${info.hostname || ''} ${info.city || ''} ${info.country_code || ''} ${addr}`.toLowerCase().includes(query)
+  ).sort((a, b) => {
+    const aName = `${a[1].hostname || ''} ${a[0]}`.toLowerCase();
+    const bName = `${b[1].hostname || ''} ${b[0]}`.toLowerCase();
+    return Number(!aName.startsWith(query)) - Number(!bName.startsWith(query)) || aName.localeCompare(bName);
+  }).slice(0, 20);
+  if (!results.length) {
+    container.innerHTML = `<p class="empty-hint">${tr('noServerMatch')}</p>`;
+    return;
+  }
+  container.innerHTML = results.map(([addr, info]) => {
+    const provider = serverProvider(info);
+    return `<button type="button" class="server-result" data-addr="${escapeHtml(addr)}"><strong>${escapeHtml(info.hostname || tr('noHostname'))}</strong>${provider ? `<span class="server-provider">${provider}</span>` : ''}<small>${escapeHtml(`${info.city || '?'}, ${info.country_code || '?'}`)}</small><span class="server-address">${escapeHtml(addr)}</span></button>`;
+  }).join('');
+  container.querySelectorAll('.server-result').forEach(button => button.addEventListener('click', () => startNearbyMode(button.dataset.addr)));
 }
 function setLanguage(lang) {
   language = lang === 'en' ? 'en' : 'pt';
@@ -678,6 +745,9 @@ let nearbyMode = { active: false, phase: 'idle', location: null, destination: nu
 document.querySelectorAll('.lang-switch button').forEach(button => {
   button.addEventListener('click', () => setLanguage(button.dataset.lang));
 });
+document.getElementById('panel').addEventListener('pointerdown', event => {
+  if (window.matchMedia('(max-width: 720px)').matches) event.currentTarget.classList.add('open');
+});
 setLanguage(language);
 
 // --- live data fetch from the collector - this is what makes the map a
@@ -821,6 +891,14 @@ function renderMap(data) {
   document.getElementById('loading-msg').style.display = 'none';
   document.getElementById('legend').style.display = 'flex';
   document.getElementById('hint').style.display = 'block';
+  if (!nearbyMode.active && !activeCityGroup && !originAddr) {
+    const previousSearch = document.getElementById('server-search')?.value || '';
+    renderEmptyPanel();
+    if (previousSearch) {
+      document.getElementById('server-search').value = previousSearch;
+      renderServerSearch(previousSearch);
+    }
+  }
 }
 
 function updateAge(lastCollectedAt) {
@@ -1128,13 +1206,21 @@ function clearCityGroup() {
   activeCityGroup = null;
 }
 
+function sortedCityServers(group) {
+  return [...group.proxies].sort((a, b) =>
+    Number(serverProvider(b.info) === 'QLASH') - Number(serverProvider(a.info) === 'QLASH') ||
+    (a.info.hostname || a.addr).localeCompare(b.info.hostname || b.addr)
+  );
+}
+
 function drawSpider(group) {
   nodesGroup.selectAll('.spider-layer').remove();
   const layer = nodesGroup.append('g').attr('class', 'spider-layer');
   const [cx, cy] = group.point;
-  const count = group.proxies.length;
+  const servers = sortedCityServers(group);
+  const count = servers.length;
 
-  group.proxies.forEach((proxy, index) => {
+  servers.forEach((proxy, index) => {
     const ring = Math.floor(index / 12);
     const ringStart = ring * 12;
     const ringCount = Math.min(12, count - ringStart);
@@ -1178,10 +1264,12 @@ function showProxyGroup(group) {
   let html = `<h2>${tr('serversIn', `${group.city}, ${group.countryCode}`)}</h2>
     <p class="empty-hint">${tr('chooseServer')}</p>
     <div class="proxy-choice-list">`;
-  group.proxies.forEach((proxy, index) => {
+  const sortedServers = sortedCityServers(group);
+  sortedServers.forEach((proxy, index) => {
+    const provider = serverProvider(proxy.info);
     html += `<button type="button" class="proxy-choice" data-addr="${proxy.addr}">
       <span class="proxy-index">${index + 1}</span>
-      <span><span class="proxy-host">${proxy.info.hostname || tr('noHostname')}</span><span class="proxy-addr">${proxy.addr}</span></span>
+      <span><span class="proxy-host">${escapeHtml(proxy.info.hostname || tr('noHostname'))}${provider ? ` <span class="server-provider">${provider}</span>` : ''}</span><span class="proxy-addr">${escapeHtml(proxy.addr)}</span></span>
     </button>`;
   });
   html += `</div>`;
