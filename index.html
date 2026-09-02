@@ -474,11 +474,11 @@ const I18N = {
     nearbyButton: 'Encontrar rota perto de mim', nearbyPrivacy: 'Ao continuar, o serviço IPWho.is usará seu IP para estimar cidade e coordenadas. Este site não armazena seu IP.',
     locating: 'Detectando localização aproximada…', locationFailed: 'Não foi possível detectar sua localização.', retry: 'Tentar novamente',
     detected: 'Localização aproximada', chooseDestination: 'Digite o endereço do servidor Quake de destino. Os pontos do mapa são proxies qwfwd, não servidores para conectar.',
-    serverPlaceholder: 'IP:porta do servidor (ex.: 203.0.113.10:27500)', findServerRoute: 'Calcular rota para o servidor', invalidServer: 'Digite um endereço de servidor no formato IP:porta.',
+    serverPlaceholder: 'IP:porta do servidor (ex.: 203.0.113.10:27500)', findServerRoute: 'Calcular rota para o servidor', invalidServer: 'Digite um servidor Quake válido no formato IP:porta. Endereços qwfwd e porta 30000 não são destinos de jogo.',
     chooseDestinationProxy: 'Este ponto é um proxy qwfwd e será usado apenas como hop.', cancelNearby: 'Sair do modo perto de mim', calculating: 'Medindo o primeiro hop e calculando rotas…',
     recommendations: 'Rotas recomendadas', basedOn: city => `Estimativa para ${city}`, approximate: 'estimado', measured: 'medido',
     playerEntry: 'você → entrada', meshLeg: 'malha → servidor', approxTotal: 'total aproximado', noRecommendations: 'Nenhuma rota conhecida para esse servidor.',
-    stunMeasured: 'medido via STUN', copyRoute: 'copiar rota', changeDestination: 'Escolher outro servidor', locationDisclaimer: 'O site tenta medir seu RTT real até proxies com STUN; nos demais usa uma estimativa geográfica claramente identificada.'
+    stunMeasured: 'medido via STUN', copyRoute: 'copiar rota', copyHops: 'copiar somente hops', changeDestination: 'Escolher outro servidor', locationDisclaimer: 'O site tenta medir seu RTT real até proxies com STUN; nos demais usa uma estimativa geográfica claramente identificada.'
   },
   en: {
     title: 'qwfwd Worldwide Mesh', brand: 'qwfwd — worldwide mesh', connecting: 'connecting to collector...',
@@ -504,11 +504,11 @@ const I18N = {
     nearbyButton: 'Find a route near me', nearbyPrivacy: 'When you continue, IPWho.is will use your IP to estimate your city and coordinates. This website does not store your IP.',
     locating: 'Detecting approximate location…', locationFailed: 'Your location could not be detected.', retry: 'Try again',
     detected: 'Approximate location', chooseDestination: 'Enter the destination Quake server address. Map points are qwfwd proxies, not game servers to connect to.',
-    serverPlaceholder: 'server IP:port (e.g. 203.0.113.10:27500)', findServerRoute: 'Calculate route to server', invalidServer: 'Enter a server address in IP:port format.',
+    serverPlaceholder: 'server IP:port (e.g. 203.0.113.10:27500)', findServerRoute: 'Calculate route to server', invalidServer: 'Enter a valid Quake server as IP:port. qwfwd addresses and port 30000 are not game destinations.',
     chooseDestinationProxy: 'This point is a qwfwd proxy and is used only as a hop.', cancelNearby: 'Exit nearby mode', calculating: 'Measuring the first hop and calculating routes…',
     recommendations: 'Recommended routes', basedOn: city => `Estimate for ${city}`, approximate: 'estimated', measured: 'measured',
     playerEntry: 'you → entry', meshLeg: 'mesh → server', approxTotal: 'approximate total', noRecommendations: 'No known route to this server.',
-    stunMeasured: 'measured via STUN', copyRoute: 'copy route', changeDestination: 'Choose another server', locationDisclaimer: 'The site tries to measure your real RTT to STUN-enabled proxies; other entries use a clearly marked geographic estimate.'
+    stunMeasured: 'measured via STUN', copyRoute: 'copy route', copyHops: 'copy hops only', changeDestination: 'Choose another server', locationDisclaimer: 'The site tries to measure your real RTT to STUN-enabled proxies; other entries use a clearly marked geographic estimate.'
   }
 };
 let language = localStorage.getItem('qwfwd-language') || (navigator.language.toLowerCase().startsWith('pt') ? 'pt' : 'en');
@@ -911,7 +911,9 @@ function renderNearbyState() {
     document.getElementById('nearby-server-form')?.addEventListener('submit', event => {
       event.preventDefault();
       const value = document.getElementById('nearby-server').value.trim();
-      if (!/^[^\s:]+:\d{1,5}$/.test(value)) {
+      const port = Number(value.slice(value.lastIndexOf(':') + 1));
+      const isKnownProxy = Boolean(liveData.nodes[value]);
+      if (!/^[^\s:]+:\d{1,5}$/.test(value) || port < 1 || port > 65535 || port === 30000 || isKnownProxy) {
         document.getElementById('nearby-server-error').style.display = 'block';
         return;
       }
@@ -1189,16 +1191,11 @@ function renderTopRoutes(addr, result) {
     routes.forEach((r, idx) => {
       const city = r.to_geo ? `${r.to_geo.city}, ${r.to_geo.country_code}` : r.to;
       const isPinned = PINNED_PROXIES.has(r.to);
-      // cl_proxyaddr syntax (unezQuake, EX_browser_pathfind.c:791-809):
-      // intermediate proxies only, "@"-joined, in near-to-far order
-      // (client's first hop first). The final destination is NOT part of
-      // this string - it's what "connect <addr>" targets separately.
-      // path = [origin, hop1, hop2, ..., destination], so the proxy chain
-      // is path[1..len-2] (everything between origin and destination).
-      const proxyChain = r.path && r.path.length > 2 ? r.path.slice(1, -1).join('@') : '';
-      const cmdText = proxyChain
-        ? `cl_proxyaddr ${proxyChain}; connect ${r.to}`
-        : `connect ${r.to}`;
+      // This ranking is proxy-to-proxy diagnostics. Every address in the
+      // path is a qwfwd hop, so it must never be emitted as "connect".
+      // A real game server is supplied separately in Route near me.
+      const proxyChain = r.path && r.path.length ? r.path.join('@') : addr;
+      const cmdText = `cl_proxyaddr ${proxyChain}`;
       // Full intermediate chain (skip origin, keep everything through the
       // destination) shown as "ip:port (City, CC)" so the address is
       // always visible next to the human-readable place name.
@@ -1217,7 +1214,7 @@ function renderTopRoutes(addr, result) {
         </div>
         <div class="row-detail">
           <div class="hop-chain">${hopLine || r.to}</div>
-          <button class="btn copy-proxy-btn" data-cmd="${cmdText.replace(/"/g, '&quot;')}">${proxyChain ? tr('copyProxy') : tr('copyConnect')}</button>
+          <button class="btn copy-proxy-btn" data-cmd="${cmdText.replace(/"/g, '&quot;')}">${tr('copyHops')}</button>
         </div>
       </div>`;
     });
