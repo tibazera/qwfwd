@@ -460,7 +460,7 @@ footer {
       <span><i style="background:var(--good)"></i>&lt;40ms</span>
       <span><i style="background:var(--warn)"></i>40&ndash;100ms</span>
       <span><i style="background:var(--bad)"></i>&gt;100ms</span>
-      <span><i style="background:var(--warn);height:9px;border-radius:50%"></i><span id="legend-test">servidor de teste</span></span>
+      <span><i style="background:var(--accent);height:9px;border-radius:50%"></i><span id="legend-test">servidor Quake</span></span>
     </div>
     <div class="hint" id="hint" style="display:none">arraste / pinça pra zoom</div>
   </div>
@@ -502,7 +502,7 @@ const I18N = {
     faster: n => `${n}ms mais rápido via malha`, slower: n => `${n}ms mais lento via malha`, same: 'mesmo tempo, direto já é ótimo',
     proxiesIn: city => `Proxies em ${city}`, chooseProxy: 'Escolha o proxy exato que deseja usar como origem.', proxyCount: n => `${n} proxies nesta cidade`,
     serversIn: city => `Servidores em ${city}`, chooseServer: 'Escolha o servidor Quake de destino.', serverCount: n => `${n} servidores nesta cidade`,
-    nearbyTitle: 'Rota perto de mim', nearbyIntro: 'Use sua localização aproximada para sugerir os melhores proxies de entrada. O mapa atual continua funcionando normalmente.',
+    nearbyTitle: 'Rota perto de mim', nearbyIntro: 'Use a localização do navegador ou marque sua posição no mapa para comparar proxies de entrada.',
     nearbyButton: 'Encontrar minha melhor rota', nearbyPrivacy: 'O navegador pedirá permissão para usar sua localização. Seu IP não será usado para descobrir sua cidade.',
     locating: 'Aguardando a localização do navegador…', locationFailed: 'Não foi possível obter a localização do navegador.', retry: 'Tentar novamente',
     detected: 'Localização escolhida', browserLocation: 'Localização do navegador', manualLocation: 'Posição manual', manualInstructions: 'Toque no mapa para marcar de onde você está jogando.', useManualLocation: 'Corrigir localização no mapa', chooseDestination: 'Escolha um servidor no mapa ou digite o endereço do servidor Quake.',
@@ -534,7 +534,7 @@ const I18N = {
     faster: n => `${n}ms faster via mesh`, slower: n => `${n}ms slower via mesh`, same: 'same time; direct is already optimal',
     proxiesIn: city => `Proxies in ${city}`, chooseProxy: 'Choose the exact proxy you want to use as the origin.', proxyCount: n => `${n} proxies in this city`,
     serversIn: city => `Servers in ${city}`, chooseServer: 'Choose the destination Quake server.', serverCount: n => `${n} servers in this city`,
-    nearbyTitle: 'Route near me', nearbyIntro: 'Use your approximate location to suggest the best entry proxies. The current map remains unchanged.',
+    nearbyTitle: 'Route near me', nearbyIntro: 'Use browser location or mark your position on the map to compare entry proxies.',
     nearbyButton: 'Find my best route', nearbyPrivacy: 'The browser will ask permission to use your location. Your IP is not used to determine your city.',
     locating: 'Waiting for browser location…', locationFailed: 'The browser location could not be obtained.', retry: 'Try again',
     detected: 'Selected location', browserLocation: 'Browser location', manualLocation: 'Manual position', manualInstructions: 'Select your playing location on the map.', useManualLocation: 'Correct location on map', chooseDestination: 'Choose a server on the map or enter its Quake server address.',
@@ -553,7 +553,7 @@ function renderEmptyPanel() {
   document.getElementById('start-nearby')?.addEventListener('click', startNearbyMode);
 }
 function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+  return String(value ?? '').replace(/\uFFFD/g, '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 }
 function serverProvider(info) {
   const name = info?.hostname || '';
