@@ -786,6 +786,11 @@ async function fetchLiveSnapshot() {
   const proxyAddrs = new Set(Object.keys(snap.edges));
   const isProxyAddr = addr => proxyAddrs.has(addr) || PINNED_PROXIES.has(addr) || geo[addr]?.is_proxy === true || Number(addr.slice(addr.lastIndexOf(':') + 1)) === 30000;
   const isQtvAddr = addr => /\bqtv\b/i.test(geo[addr]?.hostname || '');
+  // The collector currently exposes the server hostname/mod string, but not
+  // a reliable protocol-version field. KTX is therefore the conservative
+  // compatibility marker: only explicitly identified KTX game servers are
+  // shown in the public map/search. Manual IP:port route checks remain open.
+  const isKtxServer = addr => !isProxyAddr(addr) && !isQtvAddr(addr) && /\bktx\b/i.test(geo[addr]?.hostname || '');
 
   // The complete geo catalogue is the source of truth for what appears on
   // the map. The snapshot is intentionally compact and must not limit the
@@ -793,7 +798,7 @@ async function fetchLiveSnapshot() {
   for (const [addr, info] of Object.entries(geo)) {
     if (!Number.isFinite(Number(info.lat)) || !Number.isFinite(Number(info.lon))) continue;
     if (isProxyAddr(addr)) proxies[addr] = { ...info, is_proxy: true };
-    else if (!isQtvAddr(addr)) nodes[addr] = { ...info, is_proxy: false };
+    else if (isKtxServer(addr)) nodes[addr] = { ...info, is_proxy: false };
   }
 
   for (const [fromAddr, edgeList] of Object.entries(snap.edges)) {
@@ -806,7 +811,7 @@ async function fetchLiveSnapshot() {
     for (const edge of edgeList) {
       if (!geo[edge.to]) continue;
       if (isProxyAddr(edge.to)) proxies[edge.to] = { ...geo[edge.to], is_proxy: true };
-      else if (!isQtvAddr(edge.to)) nodes[edge.to] = { ...geo[edge.to], is_proxy: false };
+      else if (isKtxServer(edge.to)) nodes[edge.to] = { ...geo[edge.to], is_proxy: false };
     }
     const valid = edgeList.filter(e => proxyAddrs.has(e.to) && geo[e.to]);
     valid.sort((a, b) => a.ping - b.ping);
