@@ -583,7 +583,7 @@ function renderServerSearch(rawQuery) {
     return;
   }
   container.innerHTML = results.map(([addr, info]) => {
-    const compatible = Boolean(info.ktx_version || /\bktx\b/i.test(info.gamedir || ''));
+    const compatible = Boolean(info.ktx_version || /\bktx\b/i.test(info.gamedir || '') || /\bktx\b/i.test(info.hostname || ''));
     const color = compatible ? 'var(--good)' : 'var(--warn)';
     return `<button type="button" class="server-result" data-addr="${escapeHtml(addr)}"><strong><i class="compat-dot" style="background:${color}" title="${compatible ? 'KTX metadata found' : 'Compatibility unverified'}"></i>${countryFlag(info.country_code)}${escapeHtml(info.hostname || tr('noHostname'))}</strong><small>${escapeHtml(info.city || '?')}</small><span class="server-address">${escapeHtml(addr)}</span></button>`;
   }).join('');
@@ -867,7 +867,7 @@ function renderMap(data) {
     const isPinned = group.proxies.some(proxy => PINNED_PROXIES.has(proxy.addr));
     // Green means the collector has structured KTX/MVDSV metadata (the
     // compatibility source used by QW Tools); orange means unverified.
-    const compatible = proxy => Boolean(proxy.info.ktx_version || /\bktx\b/i.test(proxy.info.gamedir || ''));
+    const compatible = proxy => Boolean(proxy.info.ktx_version || /\bktx\b/i.test(proxy.info.gamedir || '') || /\bktx\b/i.test(proxy.info.hostname || ''));
     const allCompatible = group.proxies.every(compatible);
     const someCompatible = group.proxies.some(compatible);
     const baseRadius = isCluster ? 8 : (isPinned ? 4 : 2.8);
