@@ -452,12 +452,12 @@ footer {
 const I18N = {
   pt: {
     title: 'Malha Mundial qwfwd', brand: 'qwfwd — malha mundial', connecting: 'conectando ao coletor...',
-    proxies: 'proxies', edges: 'arestas', updated: 'atualizado', loading: 'consultando o coletor ao vivo',
-    testServer: 'servidor de teste', zoom: 'arraste / pinça pra zoom', details: 'Detalhes',
-    intro: 'Toque num proxy pra ver o ranking dos 10 melhores destinos a partir dele.',
-    note: '<strong>Nota:</strong> este ranking mede proxy↔proxy (dados reais da malha). O trecho você→proxy ainda não considera de onde você está jogando — escolha o proxy mais perto de você geograficamente e depois veja aqui os melhores saltos a partir dele.',
+    proxies: 'proxies', servers: 'servidores', edges: 'rotas internas', updated: 'atualizado', loading: 'consultando o coletor ao vivo',
+    testServer: 'servidor Quake', zoom: 'arraste / pinça pra zoom', details: 'Detalhes',
+    intro: 'Toque em um servidor Quake para calcular sua melhor rota. A malha qwfwd trabalha por trás e fica escondida.',
+    note: '<strong>Nota:</strong> o mapa mostra servidores, não proxies. O comando final usa os qwfwd somente dentro de cl_proxyaddr.',
     footerLoading: 'carregando topologia mundial e dados ao vivo do coletor…',
-    liveSubtitle: (n, m) => `${n} proxies ao vivo · ${m} com medição mesh completa`,
+    liveSubtitle: (n, m) => `${n} servidores Quake · ${m} proxies com medição mesh completa`,
     agoSec: n => `${n}s atrás`, agoMin: n => `${n}min atrás`,
     footerLive: 'Mapa ao vivo: dados frescos do coletor a cada 20s. Toque em dois proxies pra comparar rota direta (vermelha) vs. via malha (verde). Mapa base: Natural Earth.',
     collectorFail: 'não consegui falar com o coletor', selected: 'Origem selecionada', test: 'Servidor de teste',
@@ -470,6 +470,7 @@ const I18N = {
     noMesh: 'Nenhuma rota conhecida entre esses dois pontos.', newComparison: 'Nova comparação', chooseOrigin: 'Toque num ponto do mapa pra escolher a origem.',
     faster: n => `${n}ms mais rápido via malha`, slower: n => `${n}ms mais lento via malha`, same: 'mesmo tempo, direto já é ótimo',
     proxiesIn: city => `Proxies em ${city}`, chooseProxy: 'Escolha o proxy exato que deseja usar como origem.', proxyCount: n => `${n} proxies nesta cidade`,
+    serversIn: city => `Servidores em ${city}`, chooseServer: 'Escolha o servidor Quake de destino.', serverCount: n => `${n} servidores nesta cidade`,
     nearbyTitle: 'Rota perto de mim', nearbyIntro: 'Use sua localização aproximada para sugerir os melhores proxies de entrada. O mapa atual continua funcionando normalmente.',
     nearbyButton: 'Encontrar rota perto de mim', nearbyPrivacy: 'Ao continuar, o serviço IPWho.is usará seu IP para estimar cidade e coordenadas. Este site não armazena seu IP.',
     locating: 'Detectando localização aproximada…', locationFailed: 'Não foi possível detectar sua localização.', retry: 'Tentar novamente',
@@ -482,12 +483,12 @@ const I18N = {
   },
   en: {
     title: 'qwfwd Worldwide Mesh', brand: 'qwfwd — worldwide mesh', connecting: 'connecting to collector...',
-    proxies: 'proxies', edges: 'edges', updated: 'updated', loading: 'querying live collector',
-    testServer: 'test server', zoom: 'drag / pinch to zoom', details: 'Details',
-    intro: 'Select a proxy to see its ranking of the 10 best destinations.',
-    note: '<strong>Note:</strong> this ranking measures proxy↔proxy latency (real mesh data). The player→proxy leg does not yet account for where you are playing from — choose the proxy geographically closest to you, then check the best hops from it.',
+    proxies: 'proxies', servers: 'servers', edges: 'internal routes', updated: 'updated', loading: 'querying live collector',
+    testServer: 'Quake server', zoom: 'drag / pinch to zoom', details: 'Details',
+    intro: 'Select a Quake server to calculate your best route. The qwfwd mesh works behind the scenes and stays hidden.',
+    note: '<strong>Note:</strong> the map shows game servers, not proxies. qwfwd addresses only appear inside cl_proxyaddr in the final command.',
     footerLoading: 'loading worldwide topology and live collector data…',
-    liveSubtitle: (n, m) => `${n} live proxies · ${m} with complete mesh measurements`,
+    liveSubtitle: (n, m) => `${n} Quake servers · ${m} proxies with complete mesh measurements`,
     agoSec: n => `${n}s ago`, agoMin: n => `${n}min ago`,
     footerLive: 'Live map: fresh collector data every 20s. Select two proxies to compare direct (red) vs. mesh (green) routes. Base map: Natural Earth.',
     collectorFail: 'could not reach the collector', selected: 'Selected origin', test: 'Test server',
@@ -500,6 +501,7 @@ const I18N = {
     noMesh: 'No known route between these points.', newComparison: 'New comparison', chooseOrigin: 'Select a point on the map as the origin.',
     faster: n => `${n}ms faster via mesh`, slower: n => `${n}ms slower via mesh`, same: 'same time; direct is already optimal',
     proxiesIn: city => `Proxies in ${city}`, chooseProxy: 'Choose the exact proxy you want to use as the origin.', proxyCount: n => `${n} proxies in this city`,
+    serversIn: city => `Servers in ${city}`, chooseServer: 'Choose the destination Quake server.', serverCount: n => `${n} servers in this city`,
     nearbyTitle: 'Route near me', nearbyIntro: 'Use your approximate location to suggest the best entry proxies. The current map remains unchanged.',
     nearbyButton: 'Find a route near me', nearbyPrivacy: 'When you continue, IPWho.is will use your IP to estimate your city and coordinates. This website does not store your IP.',
     locating: 'Detecting approximate location…', locationFailed: 'Your location could not be detected.', retry: 'Try again',
@@ -523,7 +525,7 @@ function setLanguage(lang) {
   document.documentElement.lang = language === 'pt' ? 'pt-BR' : 'en';
   document.title = tr('title');
   document.getElementById('brand-title').textContent = tr('brand');
-  document.getElementById('stat-proxies-label').textContent = tr('proxies');
+  document.getElementById('stat-proxies-label').textContent = tr('servers');
   document.getElementById('stat-edges-label').textContent = tr('edges');
   document.getElementById('stat-updated-label').textContent = tr('updated');
   document.getElementById('legend-test').textContent = tr('testServer');
@@ -696,28 +698,38 @@ async function fetchLiveSnapshot() {
   Object.assign(geo, PINNED_GEO);
 
   const nodes = {};
+  const proxies = {};
   const edges = [];
   const proxyAddrs = new Set(Object.keys(snap.edges));
+  const isProxyAddr = addr => proxyAddrs.has(addr) || PINNED_PROXIES.has(addr) || geo[addr]?.is_proxy === true || Number(addr.slice(addr.lastIndexOf(':') + 1)) === 30000;
 
   for (const [fromAddr, edgeList] of Object.entries(snap.edges)) {
     const g = geo[fromAddr];
     if (!g) continue;
-    nodes[fromAddr] = g;
+    proxies[fromAddr] = { ...g, is_proxy: true };
+    // Every measured target is useful. Target-only addresses are Quake
+    // servers; the previous map discarded them because it kept only qwfwd
+    // origins, making it impossible to select a real game destination.
+    for (const edge of edgeList) {
+      if (!geo[edge.to]) continue;
+      if (isProxyAddr(edge.to)) proxies[edge.to] = { ...geo[edge.to], is_proxy: true };
+      else nodes[edge.to] = { ...geo[edge.to], is_proxy: false };
+    }
     const valid = edgeList.filter(e => proxyAddrs.has(e.to) && geo[e.to]);
     valid.sort((a, b) => a.ping - b.ping);
     for (const e of valid.slice(0, 8)) {
-      if (!nodes[e.to]) nodes[e.to] = geo[e.to];
+      if (!proxies[e.to]) proxies[e.to] = { ...geo[e.to], is_proxy: true };
       edges.push({ from: fromAddr, to: e.to, ping: Math.round(e.ping) });
     }
   }
 
-  // Guarantee our 4 reference test servers always render, even if their
-  // probe hasn't produced edges yet - they're the known-good baseline.
+  // Reference qwfwd nodes remain available to the route calculator but are
+  // intentionally hidden from the user-facing server map.
   for (const addr of PINNED_PROXIES) {
-    if (!nodes[addr] && geo[addr]) nodes[addr] = geo[addr];
+    if (!proxies[addr] && geo[addr]) proxies[addr] = { ...geo[addr], is_proxy: true };
   }
 
-  return { nodes, edges, lastCollectedAt: snap.last_collected_at, meshCapableCount: snap.mesh_capable_count };
+  return { nodes, proxies, edges, proxyAddrs, lastCollectedAt: snap.last_collected_at, meshCapableCount: snap.mesh_capable_count };
 }
 
 function renderMap(data) {
@@ -764,7 +776,7 @@ function renderMap(data) {
       .attr('class', `${isCluster ? 'node cluster-ring' : 'node live'}${isPinned ? ' pinned' : ''}`)
       .attr('data-city-key', group.key)
       .attr('aria-label', isCluster
-        ? `${group.city}, ${group.countryCode} — ${tr('proxyCount', group.proxies.length)}`
+        ? `${group.city}, ${group.countryCode} — ${tr('serverCount', group.proxies.length)}`
         : `${group.proxies[0].addr} — ${group.city}, ${group.countryCode}`)
       .style('--pulse-delay', `${(i % 12) * 0.18}s`)
       .attr('fill', isPinned && !isCluster ? cssVar('--warn') : cssVar('--accent'))
@@ -875,7 +887,7 @@ async function measureProxyRttViaStun(addr, timeoutMs = 2200) {
 
 function nearbyEntryCandidates(location, destination) {
   const sourcesWithEdges = new Set(liveData.edges.map(edge => edge.from));
-  const all = Object.entries(liveData.nodes)
+  const all = Object.entries(liveData.proxies || {})
     .filter(([addr, info]) => (addr === destination || sourcesWithEdges.has(addr)) && Number.isFinite(Number(info.lat)) && Number.isFinite(Number(info.lon)))
     .map(([addr, info]) => ({ addr, info, distanceKm: haversineKm(location, { lat: Number(info.lat), lon: Number(info.lon) }) }))
     .sort((a, b) => a.distanceKm - b.distanceKm);
@@ -912,7 +924,7 @@ function renderNearbyState() {
       event.preventDefault();
       const value = document.getElementById('nearby-server').value.trim();
       const port = Number(value.slice(value.lastIndexOf(':') + 1));
-      const isKnownProxy = Boolean(liveData.nodes[value]);
+      const isKnownProxy = Boolean(liveData.proxies?.[value]);
       if (!/^[^\s:]+:\d{1,5}$/.test(value) || port < 1 || port > 65535 || port === 30000 || isKnownProxy) {
         document.getElementById('nearby-server-error').style.display = 'block';
         return;
@@ -930,7 +942,8 @@ function renderNearbyState() {
   if (nearbyMode.phase === 'results') renderNearbyResults();
 }
 
-async function startNearbyMode() {
+async function startNearbyMode(requestedDestination = null) {
+  if (typeof requestedDestination !== 'string') requestedDestination = null;
   nearbyMode = { active: true, phase: 'locating', location: null, destination: null, routes: [] };
   originAddr = null;
   clearCityGroup();
@@ -945,6 +958,10 @@ async function startNearbyMode() {
       countryCode: data.country_code || '', lat: Number(data.latitude), lon: Number(data.longitude)
     };
     nearbyMode.phase = 'choosing';
+    if (requestedDestination) {
+      await chooseNearbyDestination(requestedDestination);
+      return;
+    }
   } catch (error) {
     nearbyMode.phase = 'error';
   }
@@ -973,8 +990,8 @@ function drawNearbyLocation() {
 }
 
 function handleProxySelection(addr) {
-  if (nearbyMode.active && nearbyMode.location) renderNearbyState();
-  else selectNode(addr);
+  if (nearbyMode.active && nearbyMode.location) chooseNearbyDestination(addr);
+  else startNearbyMode(addr);
 }
 
 async function chooseNearbyDestination(destination) {
@@ -1102,8 +1119,8 @@ function showProxyGroup(group) {
   compareGroup.selectAll('*').remove();
   drawSpider(group);
 
-  let html = `<h2>${tr('proxiesIn', `${group.city}, ${group.countryCode}`)}</h2>
-    <p class="empty-hint">${tr(nearbyMode.active ? 'chooseDestinationProxy' : 'chooseProxy')}</p>
+  let html = `<h2>${tr('serversIn', `${group.city}, ${group.countryCode}`)}</h2>
+    <p class="empty-hint">${tr('chooseServer')}</p>
     <div class="proxy-choice-list">`;
   group.proxies.forEach((proxy, index) => {
     html += `<button type="button" class="proxy-choice" data-addr="${proxy.addr}">
