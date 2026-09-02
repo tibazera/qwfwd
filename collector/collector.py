@@ -106,6 +106,11 @@ class GeoInfo:
     lon: float
     hostname: str
     is_proxy: bool
+    server_version: str = ""
+    ktx_version: str = ""
+    gamedir: str = ""
+    sv_antilag: str = ""
+    protocol_extensions: str = ""
 
 
 # manual geo for our pinned test proxies (real coordinates of the actual
@@ -236,6 +241,11 @@ def fetch_qw_data_servers() -> list[tuple[tuple[str, int], GeoInfo]]:
                     lon=float(coords[1]),
                     hostname=hostname,
                     is_proxy=is_proxy,
+                    server_version=version,
+                    ktx_version=str(settings.get("ktxver", "")),
+                    gamedir=str(settings.get("*gamedir", "")),
+                    sv_antilag=str(settings.get("sv_antilag", "")),
+                    protocol_extensions=str(settings.get("*z_ext", "")),
                 ),
             )
         )
@@ -326,6 +336,11 @@ def collect_once() -> None:
                     confirmed.lon,
                     current.hostname or confirmed.hostname,
                     current.is_proxy,
+                    current.server_version,
+                    current.ktx_version,
+                    current.gamedir,
+                    current.sv_antilag,
+                    current.protocol_extensions,
                 )
         # our own pinned test proxies use isolated ports (305xx) qw-data
         # has never heard of - give them known-real coordinates directly so
@@ -855,6 +870,11 @@ def _geo_to_dict(info: GeoInfo | None) -> dict | None:
         "lon": info.lon,
         "hostname": info.hostname,
         "is_proxy": info.is_proxy,
+        "server_version": info.server_version,
+        "ktx_version": info.ktx_version,
+        "gamedir": info.gamedir,
+        "sv_antilag": info.sv_antilag,
+        "protocol_extensions": info.protocol_extensions,
     }
 
 
