@@ -493,6 +493,7 @@ const I18N = {
     liveSubtitle: (n, m) => `${n} servidores Quake · ${m} proxies com medição mesh completa`,
     agoSec: n => `${n}s atrás`, agoMin: n => `${n}min atrás`,
     footerLive: 'Servidores atualizados a cada 20s. Escolha um destino; a malha qwfwd calcula a rota por trás. Mapa base: Natural Earth.',
+    compatibilityNote: 'EZCSQC pode não funcionar em servidores muito antigos; os pontos laranja indicam compatibilidade não confirmada.',
     collectorFail: 'não consegui falar com o coletor', selected: 'Origem selecionada', test: 'Servidor de teste',
     noHostname: '(sem hostname)', topTen: 'Top 10 melhores destinos', querying: 'consultando o coletor ao vivo',
     collectorError: e => `Não consegui falar com o coletor (${e}).`, origin: 'Origem', destinations: 'destinos', known: 'conhecidos',
@@ -525,6 +526,7 @@ const I18N = {
     liveSubtitle: (n, m) => `${n} Quake servers · ${m} proxies with complete mesh measurements`,
     agoSec: n => `${n}s ago`, agoMin: n => `${n}min ago`,
     footerLive: 'Servers refresh every 20s. Choose a destination; the qwfwd mesh calculates the route behind the scenes. Base map: Natural Earth.',
+    compatibilityNote: 'EZCSQC may not work on very old servers; orange points indicate unconfirmed compatibility.',
     collectorFail: 'could not reach the collector', selected: 'Selected origin', test: 'Test server',
     noHostname: '(no hostname)', topTen: 'Top 10 best destinations', querying: 'querying live collector',
     collectorError: e => `Could not reach the collector (${e}).`, origin: 'Origin', destinations: 'destinations', known: 'known',
@@ -600,7 +602,7 @@ function setLanguage(lang) {
   document.getElementById('stat-updated-label').textContent = tr('updated');
   document.getElementById('legend-test').textContent = tr('testServer');
   document.getElementById('hint').textContent = tr('zoom');
-  document.getElementById('footer-note').textContent = liveData.lastCollectedAt ? tr('footerLive') : tr('footerLoading');
+  document.getElementById('footer-note').textContent = liveData.lastCollectedAt ? `${tr('footerLive')} ${tr('compatibilityNote')}` : tr('footerLoading');
   document.querySelectorAll('.lang-switch button').forEach(button => button.classList.toggle('active', button.dataset.lang === language));
   if (liveData.lastCollectedAt) {
     document.getElementById('subtitle').textContent = tr('liveSubtitle', Object.keys(liveData.nodes).length, liveData.meshCapableCount || 0);
@@ -935,7 +937,7 @@ async function refreshLoop() {
     const data = await fetchLiveSnapshot();
     renderMap(data);
     document.getElementById('footer-note').textContent =
-      tr('footerLive');
+      `${tr('footerLive')} ${tr('compatibilityNote')}`;
   } catch (err) {
     document.getElementById('loading-msg').innerHTML =
       `<div class="spinner"></div>${tr('collectorFail')}<br><span style="opacity:0.7">${err.message}</span>`;
