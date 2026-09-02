@@ -410,6 +410,18 @@ def dijkstra(start: tuple[str, int], end: tuple[str, int]) -> tuple[float, list[
         if node == end:
             end_state = state
             break
+        # Different ports on the same physical host are not another WAN
+        # hop. Once a route reaches a qwfwd on the destination server's IP,
+        # terminate locally instead of leaving that city and coming back
+        # through an unrelated proxy (for example Miami -> Atlanta -> the
+        # game server on the original Miami host).
+        if node[0] == end[0]:
+            local_end_state = (end, hops + 1)
+            dist[local_end_state] = d
+            raw_ping[local_end_state] = raw_ping[state]
+            prev[local_end_state] = state
+            end_state = local_end_state
+            break
         if hops >= ROUTE_MAX_HOPS:
             continue
         for edge in adjacency.get(node, []):
