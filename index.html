@@ -203,6 +203,7 @@ svg#map:active { cursor: grabbing; }
 }
 .server-flag-fallback { display: inline-block; width: 20px; margin-right: 6px; text-align: center; }
 .server-result .server-address { grid-column: 1 / -1; color: var(--text-dim); font: 9.5px var(--mono); }
+.compat-dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:5px; vertical-align:middle; }
 .nearby-card {
   padding: 11px 12px; border: 1px solid var(--accent); border-radius: 8px;
   background: var(--accent-glow);
@@ -582,7 +583,9 @@ function renderServerSearch(rawQuery) {
     return;
   }
   container.innerHTML = results.map(([addr, info]) => {
-    return `<button type="button" class="server-result" data-addr="${escapeHtml(addr)}"><strong>${countryFlag(info.country_code)}${escapeHtml(info.hostname || tr('noHostname'))}</strong><small>${escapeHtml(info.city || '?')}</small><span class="server-address">${escapeHtml(addr)}</span></button>`;
+    const compatible = Boolean(info.ktx_version || /\bktx\b/i.test(info.gamedir || ''));
+    const color = compatible ? 'var(--good)' : 'var(--warn)';
+    return `<button type="button" class="server-result" data-addr="${escapeHtml(addr)}"><strong><i class="compat-dot" style="background:${color}" title="${compatible ? 'KTX metadata found' : 'Compatibility unverified'}"></i>${countryFlag(info.country_code)}${escapeHtml(info.hostname || tr('noHostname'))}</strong><small>${escapeHtml(info.city || '?')}</small><span class="server-address">${escapeHtml(addr)}</span></button>`;
   }).join('');
   container.querySelectorAll('.server-result').forEach(button => button.addEventListener('click', () => startNearbyMode(button.dataset.addr)));
 }
@@ -786,17 +789,7 @@ async function fetchLiveSnapshot() {
   const proxyAddrs = new Set(Object.keys(snap.edges));
   const isProxyAddr = addr => proxyAddrs.has(addr) || PINNED_PROXIES.has(addr) || geo[addr]?.is_proxy === true || Number(addr.slice(addr.lastIndexOf(':') + 1)) === 30000;
   const isQtvAddr = addr => /\bqtv\b/i.test(geo[addr]?.hostname || '');
-  // The collector currently exposes the server hostname/mod string, but not
-  // a reliable protocol-version field. KTX is therefore the conservative
-  // compatibility marker: only explicitly identified KTX game servers are
-  // shown in the public map/search. Manual IP:port route checks remain open.
-  const isKtxServer = addr => {
-    const info = geo[addr] || {};
-    if (isProxyAddr(addr) || isQtvAddr(addr)) return false;
-    // Prefer the structured QW Tools fields when the collector provides them.
-    // Keep the hostname fallback for older collector snapshots.
-    return /\bktx\b/i.test(info.gamedir || '') || Boolean(info.ktx_version) || /\bktx\b/i.test(info.hostname || '');
-  };
+  const isGameServer = addr => !isProxyAddr(addr) && !isQtvAddr(addr);
 
   // The complete geo catalogue is the source of truth for what appears on
   // the map. The snapshot is intentionally compact and must not limit the
@@ -804,7 +797,7 @@ async function fetchLiveSnapshot() {
   for (const [addr, info] of Object.entries(geo)) {
     if (!Number.isFinite(Number(info.lat)) || !Number.isFinite(Number(info.lon))) continue;
     if (isProxyAddr(addr)) proxies[addr] = { ...info, is_proxy: true };
-    else if (isKtxServer(addr)) nodes[addr] = { ...info, is_proxy: false };
+    else if (isGameServer(addr)) nodes[addr] = { ...info, is_proxy: false };
   }
 
   for (const [fromAddr, edgeList] of Object.entries(snap.edges)) {
@@ -817,7 +810,7 @@ async function fetchLiveSnapshot() {
     for (const edge of edgeList) {
       if (!geo[edge.to]) continue;
       if (isProxyAddr(edge.to)) proxies[edge.to] = { ...geo[edge.to], is_proxy: true };
-      else if (isKtxServer(edge.to)) nodes[edge.to] = { ...geo[edge.to], is_proxy: false };
+      else if (isGameServer(edge.to)) nodes[edge.to] = { ...geo[edge.to], is_proxy: false };
     }
     const valid = edgeList.filter(e => proxyAddrs.has(e.to) && geo[e.to]);
     valid.sort((a, b) => a.ping - b.ping);
@@ -872,6 +865,11 @@ function renderMap(data) {
     group.point = p;
     const isCluster = group.proxies.length > 1;
     const isPinned = group.proxies.some(proxy => PINNED_PROXIES.has(proxy.addr));
+    // Green means the collector has structured KTX/MVDSV metadata (the
+    // compatibility source used by QW Tools); orange means unverified.
+    const compatible = proxy => Boolean(proxy.info.ktx_version || /\bktx\b/i.test(proxy.info.gamedir || ''));
+    const allCompatible = group.proxies.every(compatible);
+    const someCompatible = group.proxies.some(compatible);
     const baseRadius = isCluster ? 8 : (isPinned ? 4 : 2.8);
     const circle = nodesGroup.append('circle')
       .attr('cx', p[0]).attr('cy', p[1])
@@ -883,7 +881,7 @@ function renderMap(data) {
         ? `${group.city}, ${group.countryCode} — ${tr('serverCount', group.proxies.length)}`
         : `${group.proxies[0].addr} — ${group.city}, ${group.countryCode}`)
       .style('--pulse-delay', `${(i % 12) * 0.18}s`)
-      .attr('fill', isPinned && !isCluster ? cssVar('--warn') : cssVar('--accent'))
+      .attr('fill', allCompatible ? cssVar('--good') : (someCompatible || isCluster ? cssVar('--warn') : cssVar('--bad')))
       .on('click', (ev) => {
         ev.stopPropagation();
         if (isCluster) showProxyGroup(group); else handleProxySelection(group.proxies[0].addr);
