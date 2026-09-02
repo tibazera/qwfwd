@@ -577,7 +577,7 @@ function renderServerSearch(rawQuery) {
     return;
   }
   container.innerHTML = results.map(([addr, info]) => {
-    return `<button type="button" class="server-result" data-addr="${escapeHtml(addr)}"><strong><span class="server-flag" aria-hidden="true">${countryFlag(info.country_code)}</span>${escapeHtml(info.hostname || tr('noHostname'))}</strong><small>${escapeHtml(`${info.city || '?'}, ${info.country_code || '?'}`)}</small><span class="server-address">${escapeHtml(addr)}</span></button>`;
+    return `<button type="button" class="server-result" data-addr="${escapeHtml(addr)}"><strong><span class="server-flag" aria-hidden="true">${countryFlag(info.country_code)}</span>${escapeHtml(info.hostname || tr('noHostname'))}</strong><small>${escapeHtml(info.city || '?')}</small><span class="server-address">${escapeHtml(addr)}</span></button>`;
   }).join('');
   container.querySelectorAll('.server-result').forEach(button => button.addEventListener('click', () => startNearbyMode(button.dataset.addr)));
 }
@@ -1172,7 +1172,7 @@ async function chooseNearbyDestination(destination) {
 function renderNearbyResults() {
   const routes = nearbyMode.routes;
   const destinationGeo = liveData.nodes[nearbyMode.destination];
-  let html = `<h2>${tr('recommendations')}</h2><div class="nearby-card"><div class="nearby-title">${tr('basedOn', nearbyMode.location.city)}</div><p>${nearbyMode.location.city} → ${destinationGeo ? destinationGeo.city + ', ' + destinationGeo.country_code : nearbyMode.destination}</p><p>${tr('locationDisclaimer')}</p></div>`;
+  let html = `<h2>${tr('recommendations')}</h2><div class="nearby-card"><div class="nearby-title">${tr('basedOn', nearbyMode.location.city)}</div><p>${nearbyMode.location.city} → ${destinationGeo ? countryFlag(destinationGeo.country_code) + ' ' + destinationGeo.city : nearbyMode.destination}</p><p>${tr('locationDisclaimer')}</p></div>`;
   if (!routes.length) {
     html += `<p class="empty-hint">${tr('noRecommendations')}</p>`;
   } else {
@@ -1184,10 +1184,10 @@ function renderNearbyResults() {
       const command = chain ? `cl_proxyaddr ${chain}; connect ${connectAddress}` : `connect ${connectAddress}`;
       const hopLine = route.path.map((pathAddr, i) => {
         const geo = route.path_geo?.[i];
-        const place = geo ? `${geo.city}, ${geo.country_code}` : pathAddr;
+        const place = geo ? `${countryFlag(geo.country_code)} ${geo.city}` : pathAddr;
         return `<span class="hop-entry" title="${pathAddr}">${place}</span>`;
       }).join('<span class="hop-arrow" aria-hidden="true">&rarr;</span>');
-      html += `<div class="route-row nearby-route"><div class="row-main"><span class="target">${index + 1}. ${entryGeo.city}, ${entryGeo.country_code}</span><span class="ping ${pingClass(route.estimatedTotalMs)}">${route.playerLegMeasured ? '' : '~'}${route.estimatedTotalMs.toFixed(0)}ms</span></div><div class="nearby-breakdown"><span>${tr('playerEntry')}: <b>${route.playerLegMeasured ? '' : '~'}${route.playerLegMs.toFixed(0)}ms</b> <span class="estimate-tag">${route.playerLegMeasured ? tr('stunMeasured') : tr('approximate')}</span></span><br><span>${tr('meshLeg')}: <b>${route.total_ping_ms.toFixed(0)}ms</b> ${tr('measured')}</span><br><span>${route.hops} ${tr('hops')} · ${Math.round(route.candidate.distanceKm)} km</span></div><div class="hop-chain">${hopLine}</div><button class="btn copy-nearby" data-cmd="${command.replace(/"/g, '&quot;')}">${tr('copyRoute')}</button></div>`;
+      html += `<div class="route-row nearby-route"><div class="row-main"><span class="target">${index + 1}. ${countryFlag(entryGeo.country_code)} ${entryGeo.city}</span><span class="ping ${pingClass(route.estimatedTotalMs)}">${route.playerLegMeasured ? '' : '~'}${route.estimatedTotalMs.toFixed(0)}ms</span></div><div class="nearby-breakdown"><span>${tr('playerEntry')}: <b>${route.playerLegMeasured ? '' : '~'}${route.playerLegMs.toFixed(0)}ms</b> <span class="estimate-tag">${route.playerLegMeasured ? tr('stunMeasured') : tr('approximate')}</span></span><br><span>${tr('meshLeg')}: <b>${route.total_ping_ms.toFixed(0)}ms</b> ${tr('measured')}</span><br><span>${route.hops} ${tr('hops')} · ${Math.round(route.candidate.distanceKm)} km</span></div><div class="hop-chain">${hopLine}</div><button class="btn copy-nearby" data-cmd="${command.replace(/"/g, '&quot;')}">${tr('copyRoute')}</button></div>`;
     });
     html += `</div>`;
   }
@@ -1268,7 +1268,7 @@ function showProxyGroup(group) {
   compareGroup.selectAll('*').remove();
   drawSpider(group);
 
-  let html = `<h2>${tr('serversIn', `${group.city}, ${group.countryCode}`)}</h2>
+  let html = `<h2>${tr('serversIn', `${countryFlag(group.countryCode)} ${group.city}`)}</h2>
     <p class="empty-hint">${tr('chooseServer')}</p>
     <div class="proxy-choice-list">`;
   const sortedServers = sortedCityServers(group);
