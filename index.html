@@ -196,7 +196,12 @@ svg#map:active { cursor: grabbing; }
 .server-result:hover, .server-result:focus-visible { border-color: var(--accent); outline: none; }
 .server-result strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 11px var(--sans); }
 .server-result small { color: var(--text-dim); font: 9px var(--mono); }
-.server-flag { margin-right: 5px; font-size: 14px; line-height: 1; vertical-align: -1px; }
+.server-flag {
+  display: inline-block; width: 20px; height: 15px; margin-right: 6px;
+  object-fit: cover; border-radius: 2px; box-shadow: 0 0 0 1px rgba(0,0,0,.12);
+  vertical-align: -3px;
+}
+.server-flag-fallback { display: inline-block; width: 20px; margin-right: 6px; text-align: center; }
 .server-result .server-address { grid-column: 1 / -1; color: var(--text-dim); font: 9.5px var(--mono); }
 .nearby-card {
   padding: 11px 12px; border: 1px solid var(--accent); border-radius: 8px;
@@ -554,8 +559,8 @@ function escapeHtml(value) {
 }
 function countryFlag(countryCode) {
   const code = String(countryCode || '').trim().toUpperCase();
-  if (!/^[A-Z]{2}$/.test(code)) return '🌐';
-  return String.fromCodePoint(...[...code].map(char => 127397 + char.charCodeAt(0)));
+  if (!/^[A-Z]{2}$/.test(code)) return '<span class="server-flag-fallback" aria-hidden="true">🌐</span>';
+  return `<img class="server-flag" src="https://flagcdn.com/20x15/${code.toLowerCase()}.png" alt="" width="20" height="15" loading="lazy">`;
 }
 function renderServerSearch(rawQuery) {
   const container = document.getElementById('server-results');
@@ -577,7 +582,7 @@ function renderServerSearch(rawQuery) {
     return;
   }
   container.innerHTML = results.map(([addr, info]) => {
-    return `<button type="button" class="server-result" data-addr="${escapeHtml(addr)}"><strong><span class="server-flag" aria-hidden="true">${countryFlag(info.country_code)}</span>${escapeHtml(info.hostname || tr('noHostname'))}</strong><small>${escapeHtml(info.city || '?')}</small><span class="server-address">${escapeHtml(addr)}</span></button>`;
+    return `<button type="button" class="server-result" data-addr="${escapeHtml(addr)}"><strong>${countryFlag(info.country_code)}${escapeHtml(info.hostname || tr('noHostname'))}</strong><small>${escapeHtml(info.city || '?')}</small><span class="server-address">${escapeHtml(addr)}</span></button>`;
   }).join('');
   container.querySelectorAll('.server-result').forEach(button => button.addEventListener('click', () => startNearbyMode(button.dataset.addr)));
 }
@@ -1275,7 +1280,7 @@ function showProxyGroup(group) {
   sortedServers.forEach((proxy, index) => {
     html += `<button type="button" class="proxy-choice" data-addr="${proxy.addr}">
       <span class="proxy-index">${index + 1}</span>
-      <span><span class="proxy-host"><span class="server-flag" aria-hidden="true">${countryFlag(proxy.info.country_code)}</span>${escapeHtml(proxy.info.hostname || tr('noHostname'))}</span><span class="proxy-addr">${escapeHtml(proxy.addr)}</span></span>
+      <span><span class="proxy-host">${countryFlag(proxy.info.country_code)}${escapeHtml(proxy.info.hostname || tr('noHostname'))}</span><span class="proxy-addr">${escapeHtml(proxy.addr)}</span></span>
     </button>`;
   });
   html += `</div>`;
