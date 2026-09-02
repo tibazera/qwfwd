@@ -790,7 +790,13 @@ async function fetchLiveSnapshot() {
   // a reliable protocol-version field. KTX is therefore the conservative
   // compatibility marker: only explicitly identified KTX game servers are
   // shown in the public map/search. Manual IP:port route checks remain open.
-  const isKtxServer = addr => !isProxyAddr(addr) && !isQtvAddr(addr) && /\bktx\b/i.test(geo[addr]?.hostname || '');
+  const isKtxServer = addr => {
+    const info = geo[addr] || {};
+    if (isProxyAddr(addr) || isQtvAddr(addr)) return false;
+    // Prefer the structured QW Tools fields when the collector provides them.
+    // Keep the hostname fallback for older collector snapshots.
+    return /\bktx\b/i.test(info.gamedir || '') || Boolean(info.ktx_version) || /\bktx\b/i.test(info.hostname || '');
+  };
 
   // The complete geo catalogue is the source of truth for what appears on
   // the map. The snapshot is intentionally compact and must not limit the
