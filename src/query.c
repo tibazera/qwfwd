@@ -636,7 +636,9 @@ void QRY_SV_PingReply(void)
 
 	sv = QRY_SV_ByAddr(&net_from);
 
-	if (sv)
+	// Only one reply belongs to each probe.  Ignoring unsolicited and
+	// duplicate packets prevents a sender from biasing avg/jitter/loss.
+	if (sv && sv->ping_sent_at > 0 && !sv->reply)
 	{
 		double current = Sys_DoubleTime();
 		double ping = current - sv->ping_sent_at;
@@ -691,9 +693,11 @@ void SVC_QRY_PingStatus(void)
 //==============================================
 // mesh wire format:
 //   probe query  (text, via normal dispatch): "meshprobe <nonce>"
-//   probe reply  (binary): 0xFF*4 'Q' 'M' <type=1><nonce:4 LE> + N*(int32 ip + int16 port + int16 ping)
+//   probe reply  (binary): 0xFF*4 'Q' 'M' <type=1><nonce:4 LE> +
+//       N*(int32 ip + int16 port + int16 avg_ping + int16 jitter + int16 loss_pct)
 //   meshstatus reply (binary, collector-facing): 0xFF*4 'Q' 'M' <type=2><reserved:4> +
-//       repeated: (int32 peer_ip + int16 peer_port + int16 age_seconds + int16 count) + count*(int32 ip + int16 port + int16 ping)
+//       repeated: (int32 peer_ip + int16 peer_port + int16 age_seconds + int16 count) +
+//       count*(int32 ip + int16 port + int16 avg_ping + int16 jitter + int16 loss_pct)
 //
 // Both replies are rate-limited per source address to avoid this becoming a
 // UDP amplification reflector: a forged-source flood of probe/meshstatus
@@ -1093,13 +1097,13 @@ static void QRY_Mesh_StoreHop2(server_t *sv, struct sockaddr_in *addr, int ping,
 	// would otherwise show up as a spurious 0ms "next hop" pointing back
 	// at the same node - a naive collector could pick it as the "best"
 	// route to itself
-	if (memcmp(&sv->addr, addr, sizeof(struct sockaddr_in)) == 0)
+	if (NET_CompareAddress(&sv->addr, addr))
 		return;
 
 	// update existing entry for the same target instead of duplicating
 	for (i = 0; i < sv->hop2_count; i++)
 	{
-		if (memcmp(&sv->hop2[i].addr, addr, sizeof(struct sockaddr_in)) == 0)
+		if (NET_CompareAddress(&sv->hop2[i].addr, addr))
 		{
 			sv->hop2[i].ping = ping;
 			sv->hop2[i].jitter = jitter;
@@ -1237,7 +1241,8 @@ qbool QRY_Mesh_IsMeshReply(void)
 }
 
 // parses a MESH_MSG_PINGSTATUS_REPLY payload: strictly-validated sequence of
-// 8-byte records (int32 raw IP + int16 port host-order + int16 ping).
+// 12-byte records (int32 raw IP + int16 port host-order + int16 avg_ping,
+// int16 jitter and int16 loss percentage).
 // every read is bounds-checked against buflen before touching memory; a
 // truncated trailing record (buflen not a multiple of 12) is ignored rather
 // than read out of bounds. Entry layout: ip(4) port(2) avg_ping(2)
@@ -1289,7 +1294,10 @@ void QRY_Mesh_HandleReply(void)
 
 	type = data[6];
 
-	memcpy(&nonce, data + 7, 4); // wire nonce is little-endian on the sending side by construction, memcpy keeps this a single machine word here
+	nonce = (unsigned int)data[7] |
+		((unsigned int)data[8] << 8) |
+		((unsigned int)data[9] << 16) |
+		((unsigned int)data[10] << 24);
 
 	if (type != MESH_MSG_PINGSTATUS_REPLY)
 		return; // we only ever expect this type as a client-side probe reply

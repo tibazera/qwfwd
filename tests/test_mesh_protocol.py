@@ -114,6 +114,9 @@ def main():
         # must not be answered 1:1 (amplification guard) ---
         sock2 = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock2.settimeout(0.3)
+        # The limiter keys by source IP, so let earlier protocol checks leave
+        # the one-second window before testing a fresh burst.
+        time.sleep(1.1)
         replies_received = 0
         for i in range(10):
             sock2.sendto(b"\xff\xff\xff\xffmeshprobe " + str(1000 + i).encode(), (HOST, PORT))
@@ -124,6 +127,7 @@ def main():
                 replies_received += 1
         except socket.timeout:
             pass
+        check("rate_limit_allows_first_reply", replies_received >= 1, f"got {replies_received}/10 replies")
         check("rate_limit_caps_flood_replies", replies_received < 10, f"got {replies_received}/10 replies")
         sock2.close()
 
