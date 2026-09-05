@@ -484,9 +484,60 @@ def parse_addr_param(value: str) -> tuple[str, int] | None:
         return None
 
 
+# caps total concurrent request handling and per-IP request rate: the
+# collector is unauthenticated and CORS-open by design (see _send_json),
+# so without this an unbounded ThreadingHTTPServer lets any caller spawn a
+# thread per connection and repeatedly trigger expensive endpoints
+# (/top-routes runs one Dijkstra search per known destination) - cheap
+# thread/CPU exhaustion from a single unauthenticated client.
+_MAX_CONCURRENT_REQUESTS = 32
+_request_slots = threading.BoundedSemaphore(_MAX_CONCURRENT_REQUESTS)
+
+_RATE_LIMIT_WINDOW = 1.0  # seconds
+_RATE_LIMIT_PER_IP = 20   # requests/window/IP
+_rate_lock = threading.Lock()
+_rate_track: dict[str, tuple[float, int]] = {}  # ip -> (window_start, count)
+
+
+def _rate_limited(ip: str) -> bool:
+    now = time.time()
+    with _rate_lock:
+        window_start, count = _rate_track.get(ip, (now, 0))
+        if now - window_start >= _RATE_LIMIT_WINDOW:
+            window_start, count = now, 0
+        count += 1
+        _rate_track[ip] = (window_start, count)
+        return count > _RATE_LIMIT_PER_IP
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass  # keep stdout to collection-cycle logs only
+
+    def handle_one_request(self) -> None:
+        if _rate_limited(self.client_address[0]):
+            self.close_connection = True
+            try:
+                self.send_response(429)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            except Exception:
+                pass
+            return
+
+        if not _request_slots.acquire(blocking=False):
+            self.close_connection = True
+            try:
+                self.send_response(503)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            except Exception:
+                pass
+            return
+        try:
+            super().handle_one_request()
+        finally:
+            _request_slots.release()
 
     def _send_json(self, obj: object, status: int = 200) -> None:
         body = json.dumps(obj).encode("utf-8")

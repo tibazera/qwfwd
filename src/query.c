@@ -3,6 +3,7 @@
 */
 
 #include "qwfwd.h"
+#include <limits.h>
 
 #define QW_SERVER_RATE (0.1) // seconds, accept fraction, how frequently sent ONE packet to some server, so 0.1 means one packet per 1/10 of second
 #define QW_SERVER_PING_QUERY "\xff\xff\xff\xffk\n"
@@ -705,6 +706,7 @@ void SVC_QRY_PingStatus(void)
 
 #define MESH_RATE_LIMIT_WINDOW 1.0		// seconds
 #define MESH_RATE_LIMIT_TRACK 64		// small ring of recently answered addresses
+#define MESH_RATE_LIMIT_AGGREGATE 64	// max total mesh replies/sec across ALL sources combined
 
 typedef struct mesh_rate_entry_s
 {
@@ -715,6 +717,30 @@ typedef struct mesh_rate_entry_s
 static mesh_rate_entry_t mesh_rate_track[MESH_RATE_LIMIT_TRACK];
 static int mesh_rate_track_next;
 
+// global budget on top of the per-source ring: the ring alone only stops a
+// single spoofed source from being answered twice, but a flood that cycles
+// through MESH_RATE_LIMIT_TRACK+1 forged addresses evicts entries before
+// they age out and gets ~1 reply per packet regardless of source diversity.
+// This caps total mesh replies/sec no matter how many distinct (real or
+// spoofed) sources are involved.
+static double mesh_rate_aggregate_window_start;
+static int mesh_rate_aggregate_count;
+
+static qbool QRY_Mesh_AggregateRateLimited(double current)
+{
+	if (current - mesh_rate_aggregate_window_start >= MESH_RATE_LIMIT_WINDOW)
+	{
+		mesh_rate_aggregate_window_start = current;
+		mesh_rate_aggregate_count = 0;
+	}
+
+	if (mesh_rate_aggregate_count >= MESH_RATE_LIMIT_AGGREGATE)
+		return true;
+
+	mesh_rate_aggregate_count++;
+	return false;
+}
+
 // true if we already replied to this address recently (and records this
 // reply for future calls) - a crude per-source token bucket, good enough to
 // kill a naive amplification flood without adding real state/memory growth
@@ -722,6 +748,9 @@ static qbool QRY_Mesh_RateLimited(const struct sockaddr_in *from)
 {
 	double current = Sys_DoubleTime();
 	int i;
+
+	if (QRY_Mesh_AggregateRateLimited(current))
+		return true;
 
 	for (i = 0; i < MESH_RATE_LIMIT_TRACK; i++)
 	{
@@ -853,9 +882,15 @@ void SVC_QRY_MeshStatus(void)
 		return;
 
 	arg = Cmd_Argv(1);
-	start_index = arg[0] ? atoi(arg) : 0;
-	if (start_index < 0)
+	if (arg[0])
+	{
+		long parsed = strtol(arg, NULL, 10);
+		start_index = (parsed < 0) ? 0 : (parsed > INT_MAX) ? INT_MAX : (int) parsed;
+	}
+	else
+	{
 		start_index = 0;
+	}
 
 	current = Sys_DoubleTime();
 
@@ -1071,6 +1106,10 @@ static void QRY_Cmd_SvList_f(void)
 // server or mvdsv simply won't understand "pingstatus" and will not reply
 // in our expected format, so it is never misclassified as mesh-capable.
 // generates a nonzero 32-bit nonce; 0 is reserved for "no outstanding probe"
+// ponytail: rand()-seeded, same as the existing svc.c challenge generator -
+// predictable to an attacker who can guess process start time/call count.
+// Upgrade path: OS CSPRNG (CryptGenRandom/getrandom) if a stronger anti-spoof
+// guarantee than the per-source+aggregate rate limit above is ever needed.
 static unsigned int QRY_Mesh_NewNonce(void)
 {
 	unsigned int nonce;
