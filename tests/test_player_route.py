@@ -57,8 +57,25 @@ def test_dijkstra_with_extra_edges_uses_injected_edge_without_mutating_graph():
     )
 
 
+def test_uuid_rate_limited_blocks_after_threshold():
+    collector._uuid_rate_track.clear()
+    uuid = "11111111-1111-4111-8111-111111111111"
+    blocked = [collector._uuid_rate_limited(uuid) for _ in range(collector._UUID_RATE_LIMIT_PER_WINDOW + 5)]
+    check(
+        "uuid_rate_limit_allows_up_to_threshold",
+        blocked[: collector._UUID_RATE_LIMIT_PER_WINDOW].count(True) == 0,
+        f"unexpected early block: {blocked[:collector._UUID_RATE_LIMIT_PER_WINDOW]}",
+    )
+    check(
+        "uuid_rate_limit_blocks_past_threshold",
+        any(blocked[collector._UUID_RATE_LIMIT_PER_WINDOW:]),
+        f"no block seen in tail: {blocked[collector._UUID_RATE_LIMIT_PER_WINDOW:]}",
+    )
+
+
 def main():
     test_dijkstra_with_extra_edges_uses_injected_edge_without_mutating_graph()
+    test_uuid_rate_limited_blocks_after_threshold()
 
     failed = [r for r in results if r[1] == "FAIL"]
     print(f"\n{len(results) - len(failed)}/{len(results)} passed")

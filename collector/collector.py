@@ -587,6 +587,25 @@ def _rate_limited(ip: str) -> bool:
         return count > _RATE_LIMIT_PER_IP
 
 
+_UUID_RATE_LIMIT_PER_WINDOW = 10  # requests/window/uuid - tighter than per-IP
+                                    # since one NAT'd IP can legitimately host
+                                    # several players, but one uuid is one app
+                                    # instance and has no reason to burst
+_uuid_rate_lock = threading.Lock()
+_uuid_rate_track: dict[str, tuple[float, int]] = {}
+
+
+def _uuid_rate_limited(uuid: str) -> bool:
+    now = time.time()
+    with _uuid_rate_lock:
+        window_start, count = _uuid_rate_track.get(uuid, (now, 0))
+        if now - window_start >= _RATE_LIMIT_WINDOW:
+            window_start, count = now, 0
+        count += 1
+        _uuid_rate_track[uuid] = (window_start, count)
+        return count > _UUID_RATE_LIMIT_PER_WINDOW
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass  # keep stdout to collection-cycle logs only
