@@ -101,10 +101,71 @@ def test_player_targets_returns_known_nodes():
         server.shutdown()
 
 
+def _post_json(port, path, payload):
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}{path}", data=data, method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            return resp.status, json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read())
+
+
+def test_player_route_happy_path_and_isolation():
+    server, port = _start_test_server()
+    try:
+        a = "10.0.1.1"
+        b = "10.0.1.2"
+        edges_before = json.dumps(collector.graph.snapshot(), sort_keys=True)
+
+        status, body = _post_json(
+            port, f"/player-route?to={b}:30000",
+            {"uuid": "22222222-2222-4222-8222-222222222222",
+             "samples": [{"ip": a, "port": 30000, "rtt_ms": 15.0}]},
+        )
+        check("player_route_status_200", status == 200, f"status={status} body={body}")
+        if status == 200:
+            check("player_route_total_ping", body.get("total_ping_ms") == 215.0, f"body={body}")
+            check("player_route_hops", body.get("hops") == 1, f"body={body}")
+
+        edges_after = json.dumps(collector.graph.snapshot(), sort_keys=True)
+        check("player_route_isolation", edges_before == edges_after, "graph mutated by /player-route")
+    finally:
+        server.shutdown()
+
+
+def test_player_route_rejects_bad_payload():
+    server, port = _start_test_server()
+    try:
+        status, _ = _post_json(port, "/player-route?to=10.0.1.2:30000", {"uuid": "not-a-uuid", "samples": []})
+        check("player_route_rejects_missing_samples", status == 400, f"status={status}")
+
+        status, _ = _post_json(
+            port, "/player-route?to=10.0.1.2:30000",
+            {"uuid": "33333333-3333-4333-8333-333333333333",
+             "samples": [{"ip": "203.0.113.9", "port": 1, "rtt_ms": 10.0}]},  # unknown target
+        )
+        check("player_route_rejects_unknown_target", status == 400, f"status={status}")
+
+        status, _ = _post_json(
+            port, "/player-route?to=10.0.1.2:30000",
+            {"uuid": "44444444-4444-4444-8444-444444444444",
+             "samples": [{"ip": "10.0.1.1", "port": 30000, "rtt_ms": 999999}]},  # out of range, dropped -> no samples left
+        )
+        check("player_route_all_samples_dropped_yields_404_or_400", status in (400, 404), f"status={status}")
+    finally:
+        server.shutdown()
+
+
 def main():
     test_dijkstra_with_extra_edges_uses_injected_edge_without_mutating_graph()
     test_uuid_rate_limited_blocks_after_threshold()
     test_player_targets_returns_known_nodes()
+    test_player_route_happy_path_and_isolation()
+    test_player_route_rejects_bad_payload()
 
     failed = [r for r in results if r[1] == "FAIL"]
     print(f"\n{len(results) - len(failed)}/{len(results)} passed")

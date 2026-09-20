@@ -606,6 +606,30 @@ def _uuid_rate_limited(uuid: str) -> bool:
         return count > _UUID_RATE_LIMIT_PER_WINDOW
 
 
+def _read_json_body(handler: BaseHTTPRequestHandler, max_bytes: int = 65536) -> dict | None:
+    try:
+        length = int(handler.headers.get("Content-Length", "0"))
+    except ValueError:
+        return None
+    if length <= 0 or length > max_bytes:
+        return None
+    try:
+        raw = handler.rfile.read(length)
+        return json.loads(raw)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+_UUID_PATTERN_LEN = 36  # "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+
+def _valid_uuid(value: object) -> bool:
+    if not isinstance(value, str) or len(value) != _UUID_PATTERN_LEN:
+        return False
+    parts = value.split("-")
+    return len(parts) == 5 and [len(p) for p in parts] == [8, 4, 4, 4, 12]
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass  # keep stdout to collection-cycle logs only
@@ -1018,6 +1042,85 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         self._send_json({"error": "not found"}, status=404)
+
+    def do_POST(self) -> None:
+        if _rate_limited(self.client_address[0]):
+            self._send_json({"error": "rate limited"}, status=429)
+            return
+
+        parsed = urlparse(self.path)
+        qs = parse_qs(parsed.query)
+
+        if parsed.path != "/player-route":
+            self._send_json({"error": "not found"}, status=404)
+            return
+
+        to_addr = parse_addr_param(qs.get("to", [""])[0])
+        if not to_addr:
+            self._send_json({"error": "usage: POST /player-route?to=ip:port"}, status=400)
+            return
+
+        body = _read_json_body(self)
+        if body is None:
+            self._send_json({"error": "invalid or missing JSON body"}, status=400)
+            return
+
+        uuid = body.get("uuid")
+        if not _valid_uuid(uuid):
+            self._send_json({"error": "missing or malformed uuid"}, status=400)
+            return
+
+        if _uuid_rate_limited(uuid):
+            self._send_json({"error": "rate limited"}, status=429)
+            return
+
+        samples = body.get("samples")
+        if not isinstance(samples, list) or not samples or len(samples) > 50:
+            self._send_json({"error": "samples must be a non-empty list, max 50 entries"}, status=400)
+            return
+
+        with graph.lock:
+            known_nodes = set(graph.edges.keys()) | set(graph.geo.keys())
+
+        player_node = ("player", 0)
+        extra_edges: list[Edge] = []
+        for sample in samples:
+            if not isinstance(sample, dict):
+                continue
+            ip = sample.get("ip")
+            port = sample.get("port")
+            rtt_ms = sample.get("rtt_ms")
+            if not isinstance(ip, str) or not isinstance(port, int):
+                continue
+            if not isinstance(rtt_ms, (int, float)) or not (0 < rtt_ms <= 2000):
+                continue
+            target = (ip, port)
+            if target not in known_nodes:
+                continue
+            extra_edges.append(Edge(to_ip=ip, to_port=port, ping=float(rtt_ms), source="player"))
+
+        if not extra_edges:
+            self._send_json({"error": "no valid samples (all rejected or targets unknown)"}, status=400)
+            return
+
+        result = dijkstra_with_extra_edges(player_node, to_addr, extra_adjacency={player_node: extra_edges})
+        if result is None:
+            self._send_json({"error": "no route found", "to": qs.get("to", [""])[0]}, status=404)
+            return
+
+        total_ping, path = result
+        path = path[1:]  # drop the synthetic player_node from the response path
+        with graph.lock:
+            path_geo = [_geo_to_dict(graph.geo.get(addr)) for addr in path]
+        self._send_json(
+            {
+                "to": qs.get("to", [""])[0],
+                "total_ping_ms": total_ping,
+                "hops": len(path) - 1,
+                "path": [f"{ip}:{port}" for ip, port in path],
+                "path_geo": path_geo,
+            }
+        )
 
 
 def _geo_to_dict(info: GeoInfo | None) -> dict | None:
