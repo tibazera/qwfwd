@@ -1153,7 +1153,8 @@ def main() -> None:
     server = ThreadingHTTPServer(("0.0.0.0", 8730), Handler)
     print(
         "[collector] serving on :8730 "
-        "(/route, /routes-to, /top-routes, /estimate-route, /compare, /client-ping, /snapshot, /geo, /health)"
+        "(/route, /routes-to, /top-routes, /estimate-route, /compare, /client-ping, /snapshot, /geo, /health, "
+        "/player-targets, /player-route)"
     )
     server.serve_forever()
 
