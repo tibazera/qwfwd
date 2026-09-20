@@ -474,6 +474,83 @@ def dijkstra(start: tuple[str, int], end: tuple[str, int]) -> tuple[float, list[
     return raw_ping[end_state], path
 
 
+def dijkstra_with_extra_edges(
+    start: tuple[str, int],
+    end: tuple[str, int],
+    extra_adjacency: dict[tuple[str, int], list[Edge]] | None = None,
+) -> tuple[float, list[tuple[str, int]]] | None:
+    """Same algorithm as dijkstra(), but merges extra_adjacency (e.g. a
+    synthetic player node's self-measured edges) into the snapshot before
+    running. Never touches `graph` - extra_adjacency lives only for the
+    duration of this call, so player-reported samples never become part of
+    the shared mesh (see spec: isolation by design, no poisoning surface)."""
+    with graph.lock:
+        adjacency = {k: list(v) for k, v in graph.edges.items()}
+    if extra_adjacency:
+        for node, edges in extra_adjacency.items():
+            adjacency.setdefault(node, []).extend(edges)
+
+    start_state = (start, 0)
+    dist: dict[tuple[tuple[str, int], int], float] = {start_state: 0.0}
+    raw_ping: dict[tuple[tuple[str, int], int], float] = {start_state: 0.0}
+    prev: dict[tuple[tuple[str, int], int], tuple[tuple[str, int], int]] = {}
+    visited: set[tuple[tuple[str, int], int]] = set()
+    pq: list[tuple[float, tuple[str, int], int]] = [(0.0, start, 0)]
+    end_state: tuple[tuple[str, int], int] | None = None
+
+    while pq:
+        d, node, hops = heapq.heappop(pq)
+        state = (node, hops)
+        if state in visited:
+            continue
+        visited.add(state)
+        if node == end:
+            end_state = state
+            break
+        if node[0] == end[0]:
+            local_end_state = (end, hops + 1)
+            dist[local_end_state] = d
+            raw_ping[local_end_state] = raw_ping[state]
+            prev[local_end_state] = state
+            end_state = local_end_state
+            break
+        if hops >= ROUTE_MAX_HOPS:
+            continue
+        for edge in adjacency.get(node, []):
+            if edge.age_seconds > ROUTE_MAX_EDGE_AGE_SECONDS:
+                continue
+            neighbor = (edge.to_ip, edge.to_port)
+            next_state = (neighbor, hops + 1)
+            jitter = float(edge.jitter or 0)
+            loss = float(edge.loss_pct or 0)
+            edge_cost = (edge.ping + ROUTE_JITTER_WEIGHT * jitter
+                         + ROUTE_LOSS_WEIGHT_MS * loss)
+            if neighbor != end:
+                edge_cost += ROUTE_RELAY_PENALTY_MS
+            nd = d + edge_cost
+            if next_state not in dist or nd < dist[next_state]:
+                dist[next_state] = nd
+                raw_ping[next_state] = raw_ping[state] + edge.ping
+                prev[next_state] = state
+                heapq.heappush(pq, (nd, neighbor, hops + 1))
+
+    if end_state is None:
+        return None
+
+    path = [end_state[0]]
+    seen = {end_state}
+    state = end_state
+    while state != start_state:
+        nxt = prev.get(state)
+        if nxt is None or nxt in seen:
+            return None
+        seen.add(nxt)
+        path.append(nxt[0])
+        state = nxt
+    path.reverse()
+    return raw_ping[end_state], path
+
+
 def parse_addr_param(value: str) -> tuple[str, int] | None:
     if ":" not in value:
         return None
