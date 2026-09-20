@@ -73,9 +73,38 @@ def test_uuid_rate_limited_blocks_after_threshold():
     )
 
 
+def _start_test_server():
+    collector.graph = collector.GraphState()
+    a = ("10.0.1.1", 30000)
+    b = ("10.0.1.2", 30000)
+    collector.graph.geo[a] = collector.GeoInfo("PT", "Portugal", "Europe", "Lisbon", 38.7, -9.1, "test-a", True)
+    collector.graph.geo[b] = collector.GeoInfo("BR", "Brazil", "South America", "Sao Paulo", -23.5, -46.6, "test-b", True)
+    collector.graph.add_edge(a, collector.Edge(to_ip=b[0], to_port=b[1], ping=200.0, source="meshstatus"))
+
+    server = collector.ThreadingHTTPServer(("127.0.0.1", 0), collector.Handler)
+    port = server.server_address[1]
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    time.sleep(0.1)
+    return server, port
+
+
+def test_player_targets_returns_known_nodes():
+    server, port = _start_test_server()
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/player-targets", timeout=2) as resp:
+            body = json.loads(resp.read())
+        check("player_targets_status_shape", "targets" in body, f"body={body}")
+        ips = {t["ip"] for t in body.get("targets", [])}
+        check("player_targets_includes_known_nodes", {"10.0.1.1", "10.0.1.2"} <= ips, f"ips={ips}")
+    finally:
+        server.shutdown()
+
+
 def main():
     test_dijkstra_with_extra_edges_uses_injected_edge_without_mutating_graph()
     test_uuid_rate_limited_blocks_after_threshold()
+    test_player_targets_returns_known_nodes()
 
     failed = [r for r in results if r[1] == "FAIL"]
     print(f"\n{len(results) - len(failed)}/{len(results)} passed")

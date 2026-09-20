@@ -952,6 +952,21 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if parsed.path == "/player-targets":
+            # Candidate list for a player's client-side ping app: every
+            # node we currently know geo for (proxies + plain game
+            # servers), capped so a player app never has to probe the
+            # full ~354-node universe on every request (spec: "só
+            # servidores/proxies relevantes pro jogador").
+            with graph.lock:
+                targets = [
+                    {"ip": ip, "port": port, "geo": _geo_to_dict(info)}
+                    for (ip, port), info in graph.geo.items()
+                ]
+            targets = targets[:200]
+            self._send_json({"targets": targets})
+            return
+
         if parsed.path == "/snapshot":
             self._send_json(
                 {
