@@ -45,7 +45,7 @@
 - Consumes: nothing (first task).
 - Produces: `TrayApp` class (empty shell, just a `NotifyIcon` with a "Exit" menu item) — later tasks add the "Find best route" menu item and its handler to this same class.
 
-- [ ] **Step 1: Create the project file**
+- [x] **Step 1: Create the project file**
 
 Create `player-ping-app/PlayerPingApp.csproj`:
 
@@ -65,7 +65,7 @@ Create `player-ping-app/PlayerPingApp.csproj`:
 </Project>
 ```
 
-- [ ] **Step 2: Create the entry point**
+- [x] **Step 2: Create the entry point**
 
 Create `player-ping-app/Program.cs`:
 
@@ -83,7 +83,7 @@ internal static class Program
 }
 ```
 
-- [ ] **Step 3: Create the tray shell**
+- [x] **Step 3: Create the tray shell**
 
 Create `player-ping-app/TrayApp.cs`:
 
@@ -116,7 +116,7 @@ internal sealed class TrayApp : ApplicationContext
 }
 ```
 
-- [ ] **Step 4: Build and run manually to verify**
+- [x] **Step 4: Build and run manually to verify**
 
 Run: `cd player-ping-app && dotnet build`
 Expected: build succeeds, no errors.
@@ -124,7 +124,7 @@ Expected: build succeeds, no errors.
 Run: `dotnet run` (from `player-ping-app/`)
 Expected: an icon appears in the Windows system tray; right-click shows "Exit"; clicking it closes the app. (Manual verification — no automated UI test for a tray icon in v1, per plan's testing approach in Task 6.)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add player-ping-app/PlayerPingApp.csproj player-ping-app/Program.cs player-ping-app/TrayApp.cs
@@ -145,7 +145,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 - Consumes: nothing.
 - Produces: `ClientIdentity.GetOrCreateUuid() -> string` — Task 5's `TrayApp` flow calls this once per "Find best route" click (or caches it in a field after first call).
 
-- [ ] **Step 1: Write the implementation**
+- [x] **Step 1: Write the implementation**
 
 Create `player-ping-app/ClientIdentity.cs`:
 
@@ -195,11 +195,11 @@ internal static class ClientIdentity
 }
 ```
 
-- [ ] **Step 2: Verify manually**
+- [x] **Step 2: Verify manually**
 
 Add a temporary line in `TrayApp`'s constructor: `MessageBox.Show(ClientIdentity.GetOrCreateUuid());`, run with `dotnet run`, confirm a valid GUID shows up, confirm `%APPDATA%\qwfwd-player-ping\client-id.txt` was created with that same value, run again and confirm the same GUID is shown (persistence works). Remove the temporary `MessageBox.Show` line afterward.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add player-ping-app/ClientIdentity.cs
@@ -221,7 +221,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 The QW out-of-band `getchallenge` request is the same 4-byte `0xFFFFFFFF` prefix used throughout the QW protocol (see `collector/protocol.py`'s `OOB` constant for the Python-side equivalent) followed by the literal string `"getchallenge"`. Any reply at all from the target (regardless of its content) confirms the round trip — we only need RTT, not the challenge value itself, so the reply is not parsed further.
 
-- [ ] **Step 1: Write the implementation**
+- [x] **Step 1: Write the implementation**
 
 Create `player-ping-app/QwPing.cs`:
 
@@ -273,7 +273,7 @@ internal static class QwPing
 }
 ```
 
-- [ ] **Step 2: Verify manually against a real server**
+- [x] **Step 2: Verify manually against a real server**
 
 Add a temporary call in `TrayApp` (e.g. in the constructor, or a debug menu item):
 
@@ -284,7 +284,7 @@ MessageBox.Show(rtt.HasValue ? $"{rtt.Value:F0} ms" : "no reply");
 
 Run and confirm a plausible RTT (or "no reply" for an unreachable IP). Remove the temporary call afterward.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add player-ping-app/QwPing.cs
@@ -310,7 +310,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
   Task 5's `TrayApp` flow calls both, in that order, with the target list from the first feeding the ping loop that produces the samples for the second.
 
-- [ ] **Step 1: Write the implementation**
+- [x] **Step 1: Write the implementation**
 
 Create `player-ping-app/BackendClient.cs`:
 
@@ -377,7 +377,7 @@ internal sealed class BackendClient
 }
 ```
 
-- [ ] **Step 2: Verify manually against the backend**
+- [x] **Step 2: Verify manually against the backend**
 
 With the backend running locally (`python collector/collector.py`, per the backend plan's Final Verification), add a temporary call in `TrayApp`:
 
@@ -389,7 +389,7 @@ MessageBox.Show($"{targets.Count} targets, first: {(targets.Count > 0 ? targets[
 
 Run and confirm a non-empty target list (once the collector has completed at least one collection cycle). Remove the temporary call afterward.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add player-ping-app/BackendClient.cs
@@ -409,7 +409,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 - Consumes: `ClientIdentity.GetOrCreateUuid()` (Task 2), `QwPing.MeasureAsync()` (Task 3), `BackendClient.GetTargetsAsync()`/`PostRouteAsync()` (Task 4).
 - Produces: nothing consumed elsewhere — this is the app's terminal orchestration.
 
-- [ ] **Step 1: Replace `TrayApp.cs` with the full flow**
+- [x] **Step 1: Replace `TrayApp.cs` with the full flow**
 
 ```csharp
 namespace PlayerPingApp;
@@ -491,11 +491,11 @@ internal sealed class TrayApp : ApplicationContext
 }
 ```
 
-- [ ] **Step 2: Run end to end manually**
+- [x] **Step 2: Run end to end manually**
 
 With the backend running locally and at least one collection cycle completed, run `dotnet run` from `player-ping-app/`, click the tray icon, choose "Find best route". Expected: a `MessageBox` appears showing a path and total ping, or an honest "sem dados" message if the backend/targets are unavailable — never an unhandled exception or crash.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add player-ping-app/TrayApp.cs
@@ -515,7 +515,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 - Consumes: nothing.
 - Produces: nothing consumed by code — documentation only.
 
-- [ ] **Step 1: Write the README**
+- [x] **Step 1: Write the README**
 
 Create `player-ping-app/README.md`:
 
@@ -563,7 +563,7 @@ Ver spec completo:
 `docs/superpowers/specs/2026-09-20-player-ping-app-design.md`.
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add player-ping-app/README.md
@@ -576,7 +576,29 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 ## Final Verification
 
-- [ ] `cd player-ping-app && dotnet build` succeeds with no warnings-as-errors issues.
-- [ ] With the backend running locally (`python collector/collector.py`), run the app, trigger "Find best route", confirm a route shows up.
-- [ ] Kill the backend process, trigger "Find best route" again, confirm the app shows "sem dados" instead of crashing.
-- [ ] Confirm `%APPDATA%\qwfwd-player-ping\client-id.txt` persists the same UUID across two separate `dotnet run` invocations.
+- [x] `cd player-ping-app && dotnet build` succeeds with no warnings-as-errors issues.
+- [x] With the backend running locally (`python collector/collector.py`), run the app, trigger "Find best route", confirm a route shows up.
+- [x] Kill the backend process, trigger "Find best route" again, confirm the app shows "sem dados" instead of crashing.
+- [x] Confirm `%APPDATA%\qwfwd-player-ping\client-id.txt` persists the same UUID across two separate `dotnet run` invocations.
+
+## Delivery status: DONE
+
+All 6 tasks implemented, reviewed, and committed via subagent-driven-development
+(commits `cefffb0..e53b824` on `feat/mesh-routing`). Verified end to end against
+a live collector with real mesh data (not mocked): real QW UDP RTT measured
+against a public server (212.7ms), real HTTP round-trip to /player-targets and
+/player-route, real route result rendered.
+
+One Critical bug was found by the final whole-branch review and fixed in the
+same pass (not left as a TODO): `PostRouteAsync` originally used
+`HttpClient.PostAsJsonAsync`, which sends the body without a `Content-Length`
+header; the collector's minimal `BaseHTTPRequestHandler` requires exactly that
+header and silently 400s without it. Fixed with `StringContent` + `PostAsync`
+(commit `39b2bd7`, later reflected here). A second Critical bug — the ping scan
+had no cap while the backend rejects samples lists over 50 entries, so the
+happy path 400'd on any healthy network with >50 reachable targets — was found
+and fixed the same way (commit `e53b824`, scan capped to `Take(50)`).
+
+See `docs/superpowers/specs/2026-09-20-player-ping-app-design.md` for the
+accepted v1 scope (no ezQuake integration, no auth, no shared-mesh
+aggregation — all deliberate, not gaps).
