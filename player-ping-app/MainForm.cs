@@ -202,22 +202,39 @@ internal sealed class MainForm : Form
             return;
         }
 
-        // backend caps /player-route samples at 50 (collector/collector.py do_POST) — cap the scan itself, not just the post
-        var scanTargets = targets.Take(50).ToList();
+        // backend caps /player-route samples at 500 (collector/collector.py
+        // do_POST, PLAYER_ROUTE_MAX_SAMPLES) — mirror it here so the scan
+        // itself never queues more pings than the final POST can accept.
+        var scanTargets = targets.Take(500).ToList();
 
+        // Pinged in batches (not fully unbounded parallel) to avoid opening
+        // hundreds of UDP sockets simultaneously - ponytail: fixed batch
+        // size, tune if 20 proves too slow/fast in practice.
+        const int batchSize = 20;
         var samples = new List<(string ip, int port, double rttMs)>();
-        for (var i = 0; i < scanTargets.Count; i++)
+        var completed = 0;
+        for (var offset = 0; offset < scanTargets.Count; offset += batchSize)
         {
-            var target = scanTargets[i];
-            SetStatus($"Medindo ping... {i + 1}/{scanTargets.Count} ({target.Ip}:{target.Port})");
-            _progressBar.Value = Math.Min(100, (int)((i + 1) / (double)scanTargets.Count * 90));
+            var batch = scanTargets.Skip(offset).Take(batchSize).ToList();
+            SetStatus($"Medindo ping... {completed}/{scanTargets.Count}");
 
-            var rtt = await QwPing.MeasureAsync(target.Ip, target.Port);
-            if (rtt.HasValue)
+            var batchResults = await Task.WhenAll(batch.Select(async target =>
             {
-                samples.Add((target.Ip, target.Port, rtt.Value));
-                AppendResultLine($"{target.Ip}:{target.Port,-8}  {rtt.Value,6:F0} ms");
+                var rtt = await QwPing.MeasureAsync(target.Ip, target.Port);
+                return (target, rtt);
+            }));
+
+            foreach (var (target, rtt) in batchResults)
+            {
+                completed++;
+                if (rtt.HasValue)
+                {
+                    samples.Add((target.Ip, target.Port, rtt.Value));
+                    AppendResultLine($"{target.Ip}:{target.Port,-8}  {rtt.Value,6:F0} ms");
+                }
             }
+
+            _progressBar.Value = Math.Min(100, (int)(completed / (double)scanTargets.Count * 90));
         }
 
         if (samples.Count == 0)

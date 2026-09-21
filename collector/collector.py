@@ -66,6 +66,13 @@ QW_DATA_TIMEOUT = 10.0
 PLAYER_GEOIP_URL = "http://ip-api.com/json/{ip}?fields=status,countryCode,continent"
 PLAYER_GEOIP_TIMEOUT = 2.0
 
+# POST /player-route sample cap: covers the full mesh (183 known hosts as
+# of writing) with headroom to grow, while still bounding the worst-case
+# cost of the per-request dijkstra_with_extra_edges call against an
+# unauthenticated public endpoint - a raised but still finite ceiling, not
+# "no limit" (see body-size cap below for the hard stop on that axis).
+PLAYER_ROUTE_MAX_SAMPLES = 500
+
 # our own 4 mesh-patched pilot instances (Lisbon/São Paulo/Miami/Fortaleza,
 # isolated test ports 30501-30504, not production 30000) - always probed
 # regardless of what masters/qw-data report this cycle, so they never
@@ -1120,8 +1127,11 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         samples = body.get("samples")
-        if not isinstance(samples, list) or not samples or len(samples) > 50:
-            self._send_json({"error": "samples must be a non-empty list, max 50 entries"}, status=400)
+        if not isinstance(samples, list) or not samples or len(samples) > PLAYER_ROUTE_MAX_SAMPLES:
+            self._send_json(
+                {"error": f"samples must be a non-empty list, max {PLAYER_ROUTE_MAX_SAMPLES} entries"},
+                status=400,
+            )
             return
 
         with graph.lock:
