@@ -10,7 +10,12 @@ namespace PlayerPingApp;
 /// </summary>
 internal sealed class MainForm : Form
 {
-    private const string BackendBaseUrl = "http://127.0.0.1:8730"; // TODO: point at the real deployed collector before distributing beyond local testing
+    // Public collector behind a Cloudflare tunnel, same one the published
+    // site (gh-pages) already uses. NOTE: trycloudflare.com quick tunnels
+    // are not stable long-term URLs - they can rotate if the tunnel is
+    // restarted server-side. If this stops responding, check the current
+    // tunnel URL the site's index.html uses (COLLECTOR_BASE) and update here.
+    private const string BackendBaseUrl = "https://screens-grill-loved-opinions.trycloudflare.com";
 
     private static readonly Color BgDark = Color.FromArgb(18, 18, 24);
     private static readonly Color CardBg = Color.FromArgb(28, 28, 38);
