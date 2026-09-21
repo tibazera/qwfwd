@@ -34,8 +34,11 @@ internal sealed class TrayApp : ApplicationContext
             return;
         }
 
+        // backend caps /player-route samples at 50 (collector/collector.py do_POST) — cap the scan itself, not just the post
+        var scanTargets = targets.Take(50);
+
         var samples = new List<(string ip, int port, double rttMs)>();
-        foreach (var target in targets)
+        foreach (var target in scanTargets)
         {
             var rtt = await QwPing.MeasureAsync(target.Ip, target.Port);
             if (rtt.HasValue)
