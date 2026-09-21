@@ -59,6 +59,13 @@ MASTERS = [
 QW_DATA_SERVERS_URL = "https://raw.githubusercontent.com/vikpe/qw-data/main/servers.json"
 QW_DATA_TIMEOUT = 10.0
 
+# free, no-key geo-IP lookup for a *player's* request IP (not a game
+# server - those already have real geo via qw-data). Used only to sort
+# /player-targets so a player's own country/continent comes first; never
+# authoritative, always falls back to the unsorted list on any failure.
+PLAYER_GEOIP_URL = "http://ip-api.com/json/{ip}?fields=status,countryCode,continent"
+PLAYER_GEOIP_TIMEOUT = 2.0
+
 # our own 4 mesh-patched pilot instances (Lisbon/São Paulo/Miami/Fortaleza,
 # isolated test ports 30501-30504, not production 30000) - always probed
 # regardless of what masters/qw-data report this cycle, so they never
@@ -472,6 +479,22 @@ def dijkstra(start: tuple[str, int], end: tuple[str, int]) -> tuple[float, list[
         state = nxt
     path.reverse()
     return raw_ping[end_state], path
+
+
+def _lookup_player_country(player_ip: str) -> str | None:
+    """Best-effort country-code lookup for a player's request IP, via a
+    free no-key geo-IP service. Returns None on any failure (timeout,
+    malformed response, service down) - callers must treat that as "no
+    preference", never as an error."""
+    try:
+        url = PLAYER_GEOIP_URL.format(ip=player_ip)
+        with urllib.request.urlopen(url, timeout=PLAYER_GEOIP_TIMEOUT) as resp:
+            data = json.loads(resp.read())
+        if data.get("status") != "success":
+            return None
+        return data.get("countryCode")
+    except (urllib.error.URLError, OSError, json.JSONDecodeError, TimeoutError):
+        return None
 
 
 def dijkstra_with_extra_edges(
@@ -977,16 +1000,38 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/player-targets":
-            # Candidate list for a player's client-side ping app: every
-            # node we currently know geo for (proxies + plain game
-            # servers), capped so a player app never has to probe the
-            # full ~354-node universe on every request (spec: "só
+            # Candidate list for a player's client-side ping app: one
+            # entry per known HOST (deduplicated across its ports - a
+            # 5-port game server previously ate 5 of the 50-target scan
+            # budget for what a player's ping app treats as one place to
+            # try), capped so a player app never has to probe the full
+            # ~354-node universe on every request (spec: "só
             # servidores/proxies relevantes pro jogador").
             with graph.lock:
+                by_ip: dict[str, tuple[int, GeoInfo | None]] = {}
+                for (ip, port), info in graph.geo.items():
+                    if ip not in by_ip or port < by_ip[ip][0]:
+                        by_ip[ip] = (port, info)  # lowest port = most likely the primary game port
                 targets = [
                     {"ip": ip, "port": port, "geo": _geo_to_dict(info)}
-                    for (ip, port), info in graph.geo.items()
+                    for ip, (port, info) in by_ip.items()
                 ]
+
+            # Best-effort: put the player's own country/continent first so
+            # the scan (capped at 50 by the client) actually reaches nearby
+            # servers instead of whatever happened to iterate first. Never
+            # blocks or errors the response - on any geo-IP failure, the
+            # list is returned in its original (unsorted) order.
+            player_ip = qs.get("ip", [""])[0] or self.client_address[0]
+            player_country = _lookup_player_country(player_ip)
+            if player_country:
+                def _priority(t: dict) -> int:
+                    geo = t.get("geo") or {}
+                    if geo.get("country_code") == player_country:
+                        return 0
+                    return 1
+                targets.sort(key=_priority)
+
             targets = targets[:200]
             self._send_json({"targets": targets})
             return
