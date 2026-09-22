@@ -22,7 +22,7 @@
 
 #define MAX_MASTERS 8 // size for masters fixed size array, I am lazy
 
-#define MAX_SERVERS 512 // we will not add more than that servers to our list, just for some sanity
+#define MAX_SERVERS 1024 // we will not add more than that servers to our list, just for some sanity
 
 #define PING_QUALITY_WINDOW 8 // samples kept per server to compute avg/jitter/loss (accumulated over natural ping cadence, no extra traffic)
 
