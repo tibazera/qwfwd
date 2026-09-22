@@ -7,6 +7,12 @@ namespace PlayerPingApp;
 /// only after a ~1min scan made it look frozen with no feedback. Styled
 /// with a dark theme and card layout (also per request) instead of default
 /// WinForms gray - still plain BCL WinForms, no new dependency.
+///
+/// Flow: scan pings every known target, then shows a clickable list of
+/// servers (by name) sorted by ping - the PLAYER picks the destination,
+/// the app no longer auto-picks "whatever has the lowest ping" (that hid
+/// the point of the feature: choosing WHERE to play and seeing the mesh
+/// route to get there, not just finding the closest server).
 /// </summary>
 internal sealed class MainForm : Form
 {
@@ -19,8 +25,8 @@ internal sealed class MainForm : Form
 
     private static readonly Color BgDark = Color.FromArgb(18, 18, 24);
     private static readonly Color CardBg = Color.FromArgb(28, 28, 38);
+    private static readonly Color ListHover = Color.FromArgb(40, 40, 52);
     private static readonly Color AccentGreen = Color.FromArgb(88, 220, 150);
-    private static readonly Color AccentGreenDark = Color.FromArgb(60, 160, 110);
     private static readonly Color TextPrimary = Color.FromArgb(235, 235, 240);
     private static readonly Color TextMuted = Color.FromArgb(150, 150, 165);
     private static readonly Font FontTitle = new("Segoe UI Semibold", 15f, FontStyle.Bold);
@@ -34,24 +40,40 @@ internal sealed class MainForm : Form
     private readonly Button _findRouteButton;
     private readonly Label _statusLabel;
     private readonly ProgressBar _progressBar;
-    private readonly TextBox _resultBox;
+    private readonly ListBox _serverList;
+    private readonly TextBox _routeResultBox;
+
+    // Ping results kept between the scan and the click on a server, keyed
+    // by "ip:port" - the ListBox only holds display strings, this map is
+    // what turns a click back into an addressable sample.
+    private readonly Dictionary<string, (PlayerTarget target, double rttMs)> _samplesByKey = new();
+
+    // Targets that timed out this scan - shown greyed-out and unclickable
+    // at the end of the list, so a server known to the mesh but silent
+    // right now doesn't just vanish without explanation.
+    private readonly List<PlayerTarget> _unresponsiveTargets = new();
+
+    // Row -> responded-or-not, rebuilt every render of _serverList so
+    // ServerList_SelectedIndexChanged can refuse clicks on unresponsive rows.
+    private readonly List<bool> _rowIsClickable = new();
 
     public MainForm()
     {
         _uuid = ClientIdentity.GetOrCreateUuid();
 
         Text = "qwfwd player ping";
-        Width = 620;
-        Height = 480;
+        Width = 640;
+        Height = 560;
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(520, 380);
+        MinimumSize = new Size(540, 420);
         BackColor = BgDark;
         ForeColor = TextPrimary;
         Font = FontBody;
         Padding = new Padding(20);
 
         var headerPanel = BuildHeaderPanel();
-        var cardPanel = BuildCardPanel(out _resultBox);
+        var listPanel = BuildServerListPanel(out _serverList);
+        var routePanel = BuildRouteResultPanel(out _routeResultBox);
         var footerPanel = BuildFooterPanel(out _findRouteButton, out _statusLabel, out _progressBar);
 
         var layout = new TableLayoutPanel
@@ -59,19 +81,21 @@ internal sealed class MainForm : Form
             Dock = DockStyle.Fill,
             BackColor = BgDark,
             ColumnCount = 1,
-            RowCount = 3,
+            RowCount = 4,
         };
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 55));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 45));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.Controls.Add(headerPanel, 0, 0);
-        layout.Controls.Add(cardPanel, 0, 1);
-        layout.Controls.Add(footerPanel, 0, 2);
+        layout.Controls.Add(listPanel, 0, 1);
+        layout.Controls.Add(routePanel, 0, 2);
+        layout.Controls.Add(footerPanel, 0, 3);
         Controls.Add(layout);
 
         var menu = new ContextMenuStrip();
         menu.Items.Add("Abrir", null, (_, _) => ShowMainWindow());
-        menu.Items.Add("Find best route", null, OnFindBestRoute);
+        menu.Items.Add("Find best route", null, OnScanClicked);
         menu.Items.Add("Exit", null, OnExit);
 
         _trayIcon = new NotifyIcon
@@ -98,7 +122,7 @@ internal sealed class MainForm : Form
         };
         var subtitle = new Label
         {
-            Text = "mede seu ping real e calcula a melhor rota até um servidor QW",
+            Text = "escaneia seu ping real, escolha um servidor e veja a rota calculada até ele",
             Font = FontBody,
             ForeColor = TextMuted,
             AutoSize = true,
@@ -109,9 +133,55 @@ internal sealed class MainForm : Form
         return panel;
     }
 
-    private Panel BuildCardPanel(out TextBox resultBox)
+    private Panel BuildServerListPanel(out ListBox serverList)
     {
-        var outer = new Panel { Dock = DockStyle.Fill, BackColor = BgDark, Padding = new Padding(0, 0, 0, 12) };
+        var outer = new Panel { Dock = DockStyle.Fill, BackColor = BgDark, Padding = new Padding(0, 0, 0, 8) };
+        var card = new RoundedPanel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = CardBg,
+            CornerRadius = 12,
+            Padding = new Padding(4),
+        };
+
+        serverList = new ListBox
+        {
+            Dock = DockStyle.Fill,
+            BorderStyle = BorderStyle.None,
+            BackColor = CardBg,
+            ForeColor = TextPrimary,
+            Font = FontMono,
+            DrawMode = DrawMode.OwnerDrawFixed,
+            ItemHeight = 22,
+        };
+        serverList.DrawItem += ServerList_DrawItem;
+        serverList.SelectedIndexChanged += ServerList_SelectedIndexChanged;
+        serverList.Items.Add("Clique em \"Find best route\" para escanear os servidores conhecidos.");
+        serverList.Enabled = false;
+
+        card.Controls.Add(serverList);
+        outer.Controls.Add(card);
+        return outer;
+    }
+
+    private void ServerList_DrawItem(object? sender, DrawItemEventArgs e)
+    {
+        e.DrawBackground();
+        if (e.Index < 0) return;
+
+        var isClickable = e.Index >= _rowIsClickable.Count || _rowIsClickable[e.Index];
+        var isSelected = isClickable && (e.State & DrawItemState.Selected) == DrawItemState.Selected;
+        using var bg = new SolidBrush(isSelected ? ListHover : CardBg);
+        e.Graphics.FillRectangle(bg, e.Bounds);
+
+        var text = _serverList.Items[e.Index]?.ToString() ?? "";
+        using var textBrush = new SolidBrush(isClickable ? TextPrimary : TextMuted);
+        e.Graphics.DrawString(text, e.Font ?? FontMono, textBrush, e.Bounds.Left + 8, e.Bounds.Top + 3);
+    }
+
+    private Panel BuildRouteResultPanel(out TextBox routeResultBox)
+    {
+        var outer = new Panel { Dock = DockStyle.Fill, BackColor = BgDark, Padding = new Padding(0, 8, 0, 12) };
         var card = new RoundedPanel
         {
             Dock = DockStyle.Fill,
@@ -120,7 +190,7 @@ internal sealed class MainForm : Form
             Padding = new Padding(16),
         };
 
-        resultBox = new TextBox
+        routeResultBox = new TextBox
         {
             Dock = DockStyle.Fill,
             Multiline = true,
@@ -130,12 +200,9 @@ internal sealed class MainForm : Form
             BackColor = CardBg,
             ForeColor = TextPrimary,
             Font = FontMono,
-            Text = "UUID local: " + _uuid + Environment.NewLine +
-                   Environment.NewLine +
-                   "Clique em \"Find best route\" para medir seu ping até os" + Environment.NewLine +
-                   "servidores conhecidos e descobrir a rota mais rápida.",
+            Text = "UUID local: " + _uuid,
         };
-        card.Controls.Add(resultBox);
+        card.Controls.Add(routeResultBox);
         outer.Controls.Add(card);
         return outer;
     }
@@ -150,7 +217,7 @@ internal sealed class MainForm : Form
             Location = new Point(0, 4),
             Size = new Size(170, 36),
         };
-        findRouteButton.Click += OnFindBestRoute;
+        findRouteButton.Click += OnScanClicked;
 
         progressBar = new ProgressBar
         {
@@ -187,10 +254,15 @@ internal sealed class MainForm : Form
         Activate();
     }
 
-    private async void OnFindBestRoute(object? sender, EventArgs e)
+    private async void OnScanClicked(object? sender, EventArgs e)
     {
         _findRouteButton.Enabled = false;
-        _resultBox.Text = string.Empty;
+        _serverList.Enabled = false;
+        _serverList.Items.Clear();
+        _samplesByKey.Clear();
+        _unresponsiveTargets.Clear();
+        _rowIsClickable.Clear();
+        _routeResultBox.Text = "UUID local: " + _uuid;
         _progressBar.Value = 0;
         SetStatus("Buscando servidores conhecidos...");
 
@@ -198,6 +270,7 @@ internal sealed class MainForm : Form
         if (targets.Count == 0)
         {
             SetStatus("sem dados (backend indisponível ou sem servidores conhecidos)");
+            _serverList.Items.Add("sem dados - tente novamente em instantes.");
             _findRouteButton.Enabled = true;
             return;
         }
@@ -211,7 +284,6 @@ internal sealed class MainForm : Form
         // hundreds of UDP sockets simultaneously - ponytail: fixed batch
         // size, tune if 20 proves too slow/fast in practice.
         const int batchSize = 20;
-        var samples = new List<(string ip, int port, double rttMs)>();
         var completed = 0;
         for (var offset = 0; offset < scanTargets.Count; offset += batchSize)
         {
@@ -229,56 +301,84 @@ internal sealed class MainForm : Form
                 completed++;
                 if (rtt.HasValue)
                 {
-                    samples.Add((target.Ip, target.Port, rtt.Value));
-                    AppendResultLine($"{target.Ip}:{target.Port,-8}  {rtt.Value,6:F0} ms");
+                    _samplesByKey[$"{target.Ip}:{target.Port}"] = (target, rtt.Value);
+                }
+                else
+                {
+                    _unresponsiveTargets.Add(target);
                 }
             }
 
-            _progressBar.Value = Math.Min(100, (int)(completed / (double)scanTargets.Count * 90));
+            _progressBar.Value = Math.Min(100, (int)(completed / (double)scanTargets.Count * 100));
         }
 
-        if (samples.Count == 0)
+        if (_samplesByKey.Count == 0)
         {
             SetStatus("sem dados (nenhum servidor respondeu ao ping)");
-            _progressBar.Value = 0;
+            _serverList.Items.Add("nenhum servidor respondeu - verifique sua conexão.");
             _findRouteButton.Enabled = true;
             return;
         }
 
-        // Destination: cheapest directly-measured sample this round - a
-        // simple, honest default for v1 ("melhor rota pra onde eu já sei
-        // que o ping é bom"), not a UI for picking an arbitrary target yet.
-        var closest = samples.OrderBy(s => s.rttMs).First();
-        var toIpPort = $"{closest.ip}:{closest.port}";
+        foreach (var (key, (target, rttMs)) in _samplesByKey.OrderBy(kv => kv.Value.rttMs))
+        {
+            _serverList.Items.Add($"{rttMs,6:F0} ms   {target.DisplayName}");
+            _rowIsClickable.Add(true);
+        }
+        // Unresponsive targets shown at the end, greyed-out and unclickable
+        // - so a server known to the mesh (like one that just doesn't
+        // answer on this network right now) doesn't just silently vanish.
+        foreach (var target in _unresponsiveTargets.OrderBy(t => t.DisplayName))
+        {
+            _serverList.Items.Add($"  sem resposta   {target.DisplayName}");
+            _rowIsClickable.Add(false);
+        }
+        _serverList.Enabled = true;
+        SetStatus(
+            $"Concluído — {_samplesByKey.Count}/{scanTargets.Count} responderam " +
+            $"({_unresponsiveTargets.Count} sem resposta). Clique num servidor pra ver a rota.");
+        _findRouteButton.Enabled = true;
+    }
 
-        SetStatus($"Calculando melhor rota até {toIpPort}...");
+    private async void ServerList_SelectedIndexChanged(object? sender, EventArgs e)
+    {
+        var index = _serverList.SelectedIndex;
+        if (index < 0 || _samplesByKey.Count == 0) return;
+        if (index >= _rowIsClickable.Count || !_rowIsClickable[index])
+        {
+            // Clicked an unresponsive row - nothing to route to, leave the
+            // last real result (if any) on screen instead of clearing it.
+            return;
+        }
+
+        // Items are inserted in the same order as _samplesByKey.OrderBy(...)
+        // below, so the index maps back to the same ordered sequence.
+        var ordered = _samplesByKey.OrderBy(kv => kv.Value.rttMs).ToList();
+        if (index >= ordered.Count) return;
+        var (_, (target, _)) = ordered[index];
+
+        var toIpPort = $"{target.Ip}:{target.Port}";
+        _routeResultBox.Text = $"Calculando rota até {target.DisplayName}...";
+
+        var samples = _samplesByKey.Values.Select(v => (v.target.Ip, v.target.Port, v.rttMs)).ToList();
         var route = await _backend.PostRouteAsync(BackendBaseUrl, _uuid, toIpPort, samples);
         if (route is null)
         {
-            SetStatus("sem dados (backend não retornou rota)");
-            _progressBar.Value = 0;
-            _findRouteButton.Enabled = true;
+            _routeResultBox.Text = $"sem dados (backend não retornou rota até {target.DisplayName})";
             return;
         }
 
         var pathText = string.Join("  ->  ", route.Path);
-        AppendResultLine("");
-        AppendResultLine("========================================");
-        AppendResultLine($"MELHOR ROTA ATÉ {toIpPort}");
-        AppendResultLine(pathText);
-        AppendResultLine($"{route.Hops} hop(s)  •  {route.TotalPingMs:F0} ms total");
-        AppendResultLine("========================================");
-        _progressBar.Value = 100;
-        SetStatus($"Concluído — {samples.Count}/{scanTargets.Count} servidores responderam.");
-        _findRouteButton.Enabled = true;
+        _routeResultBox.Text =
+            $"MELHOR ROTA ATÉ {target.DisplayName}" + Environment.NewLine +
+            $"({toIpPort})" + Environment.NewLine +
+            Environment.NewLine +
+            pathText + Environment.NewLine +
+            Environment.NewLine +
+            $"{route.Hops} hop(s)  •  {route.TotalPingMs:F0} ms total";
     }
 
     private void SetStatus(string text) => _statusLabel.Text = text;
-
-    private void AppendResultLine(string line)
-    {
-        _resultBox.AppendText(line + Environment.NewLine);
-    }
 
     private void OnExit(object? sender, EventArgs e)
     {

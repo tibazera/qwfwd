@@ -5,9 +5,24 @@ using System.Text.Json.Serialization;
 
 namespace PlayerPingApp;
 
+internal sealed record PlayerTargetGeo(
+    [property: JsonPropertyName("hostname")] string? Hostname,
+    [property: JsonPropertyName("country")] string? Country,
+    [property: JsonPropertyName("city")] string? City);
+
 internal sealed record PlayerTarget(
     [property: JsonPropertyName("ip")] string Ip,
-    [property: JsonPropertyName("port")] int Port);
+    [property: JsonPropertyName("port")] int Port,
+    [property: JsonPropertyName("geo")] PlayerTargetGeo? Geo)
+{
+    /// <summary>Human-readable label for the destination picker - falls back
+    /// gracefully when geo data is missing (a node the collector hasn't
+    /// resolved a hostname for yet) rather than showing a blank entry.</summary>
+    public string DisplayName =>
+        Geo?.Hostname is { Length: > 0 } name
+            ? $"{name} ({Geo.City ?? Geo.Country ?? "?"})"
+            : $"{Ip}:{Port}";
+}
 
 internal sealed record PlayerTargetsResponse(
     [property: JsonPropertyName("targets")] List<PlayerTarget> Targets);
