@@ -1615,24 +1615,4 @@ window.addEventListener('resize', () => {
   W = wrap.clientWidth; H = wrap.clientHeight;
   svg.attr('viewBox', [0, 0, W, H]);
 });
-
-// THROWAWAY SPIKE - testing if this HTTPS page can reach a local app on
-// 127.0.0.1. Remove after validating. Visible banner + console log.
-(async () => {
-  const banner = document.createElement('div');
-  banner.style.cssText = 'position:fixed;bottom:12px;right:12px;z-index:9999;background:#111;color:#fff;padding:10px 14px;border-radius:8px;font:12px monospace;max-width:320px;white-space:pre-wrap;';
-  banner.textContent = 'testando conexão local...';
-  document.body.appendChild(banner);
-  try {
-    const resp = await fetch('http://127.0.0.1:5757', { mode: 'cors' });
-    const data = await resp.json();
-    banner.textContent = 'SPIKE OK: ' + JSON.stringify(data);
-    banner.style.background = '#166534';
-    console.log('[spike] local fetch succeeded', data);
-  } catch (err) {
-    banner.textContent = 'SPIKE BLOQUEADO: ' + err.message;
-    banner.style.background = '#991b1b';
-    console.log('[spike] local fetch failed', err);
-  }
-})();
 </script>
