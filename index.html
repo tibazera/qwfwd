@@ -515,7 +515,7 @@ const I18N = {
     chooseDestinationProxy: 'Este ponto é um proxy qwfwd e será usado apenas como hop.', cancelNearby: 'Sair do modo perto de mim', calculating: 'Medindo o primeiro hop e calculando rotas…',
     recommendations: 'Rotas recomendadas', basedOn: city => `Estimativa para ${city}`, approximate: 'estimado', measured: 'medido',
     playerEntry: 'você → entrada', meshLeg: 'malha → servidor', approxTotal: 'total aproximado', noRecommendations: 'Nenhuma rota conhecida para esse servidor.',
-    stunMeasured: 'medido via STUN', copyRoute: 'copiar rota', copyHops: 'copiar somente hops', changeDestination: 'Escolher outro servidor', locationDisclaimer: 'O site tenta medir seu RTT real até proxies com STUN; nos demais usa uma estimativa geográfica claramente identificada.'
+    stunMeasured: 'medido via STUN', appMeasured: 'medido via app', copyRoute: 'copiar rota', copyHops: 'copiar somente hops', changeDestination: 'Escolher outro servidor', locationDisclaimer: 'O site tenta medir seu RTT real via o app local (se aberto) ou via STUN; nos demais usa uma estimativa geográfica claramente identificada.'
   },
   en: {
     title: 'QW Route Finder', brand: 'qwfwd route finder', connecting: 'connecting to collector...',
@@ -548,7 +548,7 @@ const I18N = {
     chooseDestinationProxy: 'This point is a qwfwd proxy and is used only as a hop.', cancelNearby: 'Exit nearby mode', calculating: 'Measuring the first hop and calculating routes…',
     recommendations: 'Recommended routes', basedOn: city => `Estimate for ${city}`, approximate: 'estimated', measured: 'measured',
     playerEntry: 'you → entry', meshLeg: 'mesh → server', approxTotal: 'approximate total', noRecommendations: 'No known route to this server.',
-    stunMeasured: 'measured via STUN', copyRoute: 'copy route', copyHops: 'copy hops only', changeDestination: 'Choose another server', locationDisclaimer: 'The site tries to measure your real RTT to STUN-enabled proxies; other entries use a clearly marked geographic estimate.'
+    stunMeasured: 'measured via STUN', appMeasured: 'measured via app', copyRoute: 'copy route', copyHops: 'copy hops only', changeDestination: 'Choose another server', locationDisclaimer: 'The site tries to measure your real RTT via the local app (if open) or STUN; other entries use a clearly marked geographic estimate.'
   }
 };
 let language = localStorage.getItem('qwfwd-language') || (navigator.language.toLowerCase().startsWith('pt') ? 'pt' : 'en');
@@ -971,6 +971,25 @@ function estimatePlayerLegMs(distanceKm) {
   return Math.max(3, 5 + distanceKm * 0.014);
 }
 
+// Real ping via the optional local desktop app (player-ping-app), if it's
+// running on the player's machine - see
+// docs/superpowers/specs/2026-09-21-site-app-local-bridge-design.md.
+// Silent, short-timeout probe: most visitors don't have the app open, and
+// this must never surface an error or delay the page for them.
+const LOCAL_APP_BASE = 'http://127.0.0.1:5757';
+async function measureViaLocalApp(addr, timeoutMs = 400) {
+  try {
+    const response = await fetch(`${LOCAL_APP_BASE}/ping?target=${encodeURIComponent(addr)}`, {
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    return Number.isFinite(data.rtt_ms) ? data.rtt_ms : null;
+  } catch (error) {
+    return null; // app not running, or didn't answer in time - normal case
+  }
+}
+
 async function measureProxyRttViaStun(addr, timeoutMs = 2200) {
   if (!window.RTCPeerConnection || !/^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(addr)) return null;
   const started = performance.now();
@@ -1162,10 +1181,17 @@ async function chooseNearbyDestination(destination) {
   const candidates = nearbyEntryCandidates(nearbyMode.location, nearbyMode.destination);
 
   try {
-    const measuredRtts = new Map();
+    const measuredRtts = new Map(); // addr -> { rtt, source: 'app' | 'stun' }
     await Promise.all(candidates.slice(0, 12).map(async candidate => {
-      const rtt = await measureProxyRttViaStun(candidate.addr);
-      if (Number.isFinite(rtt)) measuredRtts.set(candidate.addr, rtt);
+      const viaApp = await measureViaLocalApp(candidate.addr);
+      if (Number.isFinite(viaApp)) {
+        measuredRtts.set(candidate.addr, { rtt: viaApp, source: 'app' });
+        return;
+      }
+      const viaStun = await measureProxyRttViaStun(candidate.addr);
+      if (Number.isFinite(viaStun)) {
+        measuredRtts.set(candidate.addr, { rtt: viaStun, source: 'stun' });
+      }
     }));
     const entries = candidates.map(candidate => candidate.addr);
     const response = await fetch(`${COLLECTOR_BASE}/routes-to?to=${encodeURIComponent(destination)}&entries=${encodeURIComponent(entries.join(','))}`, { cache: 'no-store' });
@@ -1174,11 +1200,12 @@ async function chooseNearbyDestination(destination) {
     const candidateByAddr = new Map(candidates.map(candidate => [candidate.addr, candidate]));
     nearbyMode.routes = (data.routes || []).filter(route => route.known).map(route => {
       const candidate = candidateByAddr.get(route.entry);
-      const measuredPlayerLegMs = measuredRtts.get(route.entry);
-      const playerLegMeasured = Number.isFinite(measuredPlayerLegMs);
-      const playerLegMs = playerLegMeasured ? measuredPlayerLegMs : estimatePlayerLegMs(candidate.distanceKm);
+      const measured = measuredRtts.get(route.entry);
+      const playerLegSource = measured ? measured.source : 'estimate';
+      const playerLegMeasured = playerLegSource !== 'estimate';
+      const playerLegMs = measured ? measured.rtt : estimatePlayerLegMs(candidate.distanceKm);
       route.path_geo = (route.path || []).map((pathAddr, i) => confirmedGeo(pathAddr, route.path_geo?.[i]));
-      return { ...route, candidate, playerLegMs, playerLegMeasured, estimatedTotalMs: playerLegMs + route.total_ping_ms };
+      return { ...route, candidate, playerLegMs, playerLegMeasured, playerLegSource, estimatedTotalMs: playerLegMs + route.total_ping_ms };
     }).sort((a, b) => a.estimatedTotalMs - b.estimatedTotalMs).slice(0, 3);
   } catch (error) {
     nearbyMode.routes = [];
@@ -1205,7 +1232,10 @@ function renderNearbyResults() {
         const place = geo ? `${countryFlag(geo.country_code)} ${geo.city}` : pathAddr;
         return `<span class="hop-entry" title="${pathAddr}">${place}</span>`;
       }).join('<span class="hop-arrow" aria-hidden="true">&rarr;</span>');
-      html += `<div class="route-row nearby-route"><div class="row-main"><span class="target">${index + 1}. ${countryFlag(entryGeo.country_code)} ${entryGeo.city}</span><span class="ping ${pingClass(route.estimatedTotalMs)}">${route.playerLegMeasured ? '' : '~'}${route.estimatedTotalMs.toFixed(0)}ms</span></div><div class="nearby-breakdown"><span>${tr('playerEntry')}: <b>${route.playerLegMeasured ? '' : '~'}${route.playerLegMs.toFixed(0)}ms</b> <span class="estimate-tag">${route.playerLegMeasured ? tr('stunMeasured') : tr('approximate')}</span></span><br><span>${tr('meshLeg')}: <b>${route.total_ping_ms.toFixed(0)}ms</b> ${tr('measured')}</span><br><span>${route.hops} ${tr('hops')} · ${Math.round(route.candidate.distanceKm)} km</span></div><div class="hop-chain">${hopLine}</div><button class="btn copy-nearby" data-cmd="${command.replace(/"/g, '&quot;')}">${tr('copyRoute')}</button></div>`;
+      const legSourceLabel = route.playerLegSource === 'app' ? tr('appMeasured')
+        : route.playerLegSource === 'stun' ? tr('stunMeasured')
+        : tr('approximate');
+      html += `<div class="route-row nearby-route"><div class="row-main"><span class="target">${index + 1}. ${countryFlag(entryGeo.country_code)} ${entryGeo.city}</span><span class="ping ${pingClass(route.estimatedTotalMs)}">${route.playerLegMeasured ? '' : '~'}${route.estimatedTotalMs.toFixed(0)}ms</span></div><div class="nearby-breakdown"><span>${tr('playerEntry')}: <b>${route.playerLegMeasured ? '' : '~'}${route.playerLegMs.toFixed(0)}ms</b> <span class="estimate-tag">${legSourceLabel}</span></span><br><span>${tr('meshLeg')}: <b>${route.total_ping_ms.toFixed(0)}ms</b> ${tr('measured')}</span><br><span>${route.hops} ${tr('hops')} · ${Math.round(route.candidate.distanceKm)} km</span></div><div class="hop-chain">${hopLine}</div><button class="btn copy-nearby" data-cmd="${command.replace(/"/g, '&quot;')}">${tr('copyRoute')}</button></div>`;
     });
     html += `</div>`;
   }
