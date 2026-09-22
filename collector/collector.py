@@ -1009,16 +1009,30 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/player-targets":
             # Candidate list for a player's client-side ping app: one
             # entry per known HOST (deduplicated across its ports - a
-            # 5-port game server previously ate 5 of the 50-target scan
-            # budget for what a player's ping app treats as one place to
-            # try), capped so a player app never has to probe the full
-            # ~354-node universe on every request (spec: "só
-            # servidores/proxies relevantes pro jogador").
+            # 5-port game server previously ate 5 of the scan budget for
+            # what a player's ping app treats as one place to try).
+            #
+            # Picking WHICH port to keep is not "lowest number wins" - on
+            # a single host, the low round ports (28000, 30000, ...) are
+            # infrastructure (qwfwd itself, or QTV, the spectator/demo
+            # relay), never where a player actually connects to play; the
+            # real game port is the "X501"-style one (27501, 28501, ...).
+            # A prior version picked the lowest port and would silently
+            # always offer QTV or the proxy port instead of the real
+            # server on hosts that expose both - excluded here by
+            # `is_proxy` (already tracked) and by "QTV" appearing in the
+            # server's own version string (QTV always self-identifies,
+            # unlike port-number conventions that can vary by host).
             with graph.lock:
                 by_ip: dict[str, tuple[int, GeoInfo | None]] = {}
                 for (ip, port), info in graph.geo.items():
+                    if info is not None:
+                        if info.is_proxy:
+                            continue
+                        if "qtv" in info.server_version.lower():
+                            continue
                     if ip not in by_ip or port < by_ip[ip][0]:
-                        by_ip[ip] = (port, info)  # lowest port = most likely the primary game port
+                        by_ip[ip] = (port, info)
                 targets = [
                     {"ip": ip, "port": port, "geo": _geo_to_dict(info)}
                     for ip, (port, info) in by_ip.items()
