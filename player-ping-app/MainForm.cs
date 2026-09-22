@@ -35,6 +35,7 @@ internal sealed class MainForm : Form
 
     private readonly NotifyIcon _trayIcon;
     private readonly BackendClient _backend = new();
+    private readonly LocalPingServer _localPingServer = new();
     private readonly string _uuid;
 
     private readonly Button _findRouteButton;
@@ -60,6 +61,7 @@ internal sealed class MainForm : Form
     public MainForm()
     {
         _uuid = ClientIdentity.GetOrCreateUuid();
+        _localPingServer.Start();
 
         Text = "qwfwd player ping";
         Width = 640;
@@ -382,6 +384,7 @@ internal sealed class MainForm : Form
 
     private void OnExit(object? sender, EventArgs e)
     {
+        _localPingServer.Stop();
         _trayIcon.Visible = false;
         Application.Exit();
     }
