@@ -32,6 +32,12 @@ internal sealed record RouteResult(
     [property: JsonPropertyName("hops")] int Hops,
     [property: JsonPropertyName("path")] List<string> Path);
 
+internal sealed record LinkResult(
+    [property: JsonPropertyName("uuid")] string Uuid,
+    [property: JsonPropertyName("nick")] string Nick,
+    [property: JsonPropertyName("country")] string Country,
+    [property: JsonPropertyName("city")] string City);
+
 internal sealed class BackendClient
 {
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(5) };
@@ -73,6 +79,26 @@ internal sealed class BackendClient
                 return null;
             }
             return await response.Content.ReadFromJsonAsync<RouteResult>();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    public async Task<LinkResult?> LinkAsync(string baseUrl, string linkCode)
+    {
+        var payload = new { link_code = linkCode };
+        try
+        {
+            var json = JsonSerializer.Serialize(payload);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            var response = await Http.PostAsync($"{baseUrl}/player-link", content);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+            return await response.Content.ReadFromJsonAsync<LinkResult>();
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or NotSupportedException)
         {

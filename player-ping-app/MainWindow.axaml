@@ -33,6 +33,11 @@
       <TextBlock Text="qwfwd  •  player ping" FontSize="18" FontWeight="Bold" Foreground="#EBEBF0" />
       <TextBlock Text="escaneia seu ping real, escolha um servidor e veja a rota calculada até ele"
                  Foreground="#9696A5" Margin="0,4,0,0" />
+      <StackPanel Orientation="Horizontal" Margin="0,8,0,0" Spacing="8">
+        <TextBox Name="LinkCodeBox" Watermark="código do site (6 dígitos)" Width="200" />
+        <Button Name="LinkButton" Content="Vincular" Click="OnLinkClicked" />
+        <TextBlock Name="LinkStatusLabel" Foreground="#9696A5" VerticalAlignment="Center" />
+      </StackPanel>
     </StackPanel>
 
     <Border Grid.Row="1" Classes="card" Margin="0,0,0,8">

@@ -19,6 +19,11 @@ public sealed partial class MainWindow : Window
 
     private readonly BackendClient _backend = new();
     private readonly LocalPingServer _localPingServer = new();
+    // Set once from ClientIdentity at construction. A successful link
+    // (OnLinkClicked) overwrites the FILE on disk via ClientIdentity.SetUuid
+    // for the *next* launch - it does not hot-swap this field mid-session,
+    // since nothing in this run has yet used the old uuid for anything the
+    // player would notice diverge (no scan has necessarily happened yet).
     private readonly string _uuid;
 
     private readonly Dictionary<string, (PlayerTarget target, double rttMs)> _samplesByKey = new();
@@ -148,6 +153,31 @@ public sealed partial class MainWindow : Window
             pathText + Environment.NewLine +
             Environment.NewLine +
             $"{route.Hops} hop(s)  •  {route.TotalPingMs:F0} ms total";
+    }
+
+    private async void OnLinkClicked(object? sender, RoutedEventArgs e)
+    {
+        var code = LinkCodeBox.Text?.Trim();
+        if (string.IsNullOrEmpty(code))
+        {
+            LinkStatusLabel.Text = "digite o código do site";
+            return;
+        }
+
+        LinkButton.IsEnabled = false;
+        LinkStatusLabel.Text = "vinculando...";
+
+        var result = await _backend.LinkAsync(BackendBaseUrl, code);
+        if (result is null)
+        {
+            LinkStatusLabel.Text = "código inválido ou expirado";
+            LinkButton.IsEnabled = true;
+            return;
+        }
+
+        ClientIdentity.SetUuid(result.Uuid);
+        LinkStatusLabel.Text = $"vinculado como {result.Nick} ({result.City}, {result.Country})";
+        LinkButton.IsEnabled = true;
     }
 
     private void SetStatus(string text) => Dispatcher.UIThread.Post(() => StatusLabel.Text = text);
