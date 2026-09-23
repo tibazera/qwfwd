@@ -28,9 +28,35 @@ X11/Wayland disponível aqui) — validar manualmente antes de distribuir.
 
 ## Configuração
 
-A URL do backend está fixa em `TrayApp.cs` (`BackendBaseUrl`,
-`http://127.0.0.1:8730` por padrão) — ajuste antes de distribuir pra
-outros testadores apontando pro coletor real.
+A URL do backend está fixa em `MainWindow.axaml.cs` (`BackendBaseUrl`) —
+hoje aponta pro coletor público via túnel Cloudflare. Se esse túnel mudar
+ou você quiser testar contra um coletor local, troque essa constante e
+rebuilde.
+
+## Testar junto com o site (bridge local)
+
+O site público (gh-pages) tenta usar o ping real deste app automaticamente
+quando ele está aberto na sua máquina — sem precisar configurar nada no
+site. Como funciona:
+
+1. Rode o app (`dotnet run`, ou o binário publicado) e deixe a janela
+   aberta. Ele sobe um servidor HTTP local em `127.0.0.1:5757`
+   (`LocalPingServer.cs`) só com o endpoint `GET /ping?target=ip:port`.
+2. Abra o site normalmente no navegador.
+3. Ao clicar num servidor no mapa, o site tenta primeiro `fetch()` nesse
+   endpoint local (timeout ~400ms). Se responder, usa o RTT real medido
+   pelo app e mostra "medido via app". Sem o app aberto, cai pro STUN e
+   depois pra estimativa geográfica — como já fazia antes, sem popup nem
+   erro visível.
+4. Pra checar a ponte manualmente sem o site: com o app aberto,
+   `curl "http://127.0.0.1:5757/ping?target=<ip>:<porta>"` deve responder
+   `{"rtt_ms": ...}` (ou `{"error":"timeout"}` se o alvo não respondeu).
+
+Se a porta 5757 já estiver em uso (outra instância do app, outro
+processo), o app loga e segue funcionando normalmente — só a ponte com o
+site fica indisponível, o scan manual continua igual.
+
+Detalhes de arquitetura: `docs/superpowers/specs/2026-09-21-site-app-local-bridge-design.md`.
 
 ## Escopo (v1)
 
