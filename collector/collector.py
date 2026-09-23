@@ -73,6 +73,12 @@ PLAYER_GEOIP_TIMEOUT = 2.0
 # "no limit" (see body-size cap below for the hard stop on that axis).
 PLAYER_ROUTE_MAX_SAMPLES = 500
 
+# TTL for the per-uuid cache written by POST /player-route and read by
+# GET /player-route-cached - ping changes fast, so stale data past this
+# window is worse than falling through to the site's other fallbacks
+# (local bridge / STUN / geographic estimate).
+PLAYER_SAMPLES_TTL_SECONDS = 120
+
 # our own 4 mesh-patched pilot instances (Lisbon/São Paulo/Miami/Fortaleza,
 # isolated test ports 30501-30504, not production 30000) - always probed
 # regardless of what masters/qw-data report this cycle, so they never
@@ -686,6 +692,26 @@ def _uuid_rate_limited(uuid: str) -> bool:
         return count > _UUID_RATE_LIMIT_PER_WINDOW
 
 
+_player_samples_lock = threading.Lock()
+_player_samples: dict[str, tuple[float, list]] = {}
+
+
+def _store_player_samples(uuid: str, samples: list) -> None:
+    with _player_samples_lock:
+        _player_samples[uuid] = (time.time(), samples)
+
+
+def _get_cached_samples(uuid: str) -> list | None:
+    with _player_samples_lock:
+        entry = _player_samples.get(uuid)
+    if entry is None:
+        return None
+    timestamp, samples = entry
+    if time.time() - timestamp > PLAYER_SAMPLES_TTL_SECONDS:
+        return None
+    return samples
+
+
 def _read_json_body(handler: BaseHTTPRequestHandler, max_bytes: int = 65536) -> dict | None:
     try:
         length = int(handler.headers.get("Content-Length", "0"))
@@ -1157,6 +1183,33 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"status": "ok", "last_collected_at": graph.last_collected_at})
             return
 
+        if parsed.path == "/player-route-cached":
+            uuid_param = qs.get("uuid", [""])[0]
+            if not _valid_uuid(uuid_param):
+                self._send_json({"error": "missing or malformed uuid"}, status=400)
+                return
+            to_addr = parse_addr_param(qs.get("to", [""])[0])
+            if not to_addr:
+                self._send_json({"error": "usage: /player-route-cached?uuid=...&to=ip:port"}, status=400)
+                return
+
+            samples = _get_cached_samples(uuid_param)
+            if samples is None:
+                self._send_json({"error": "no cached samples"}, status=404)
+                return
+
+            result, error = _route_from_samples(uuid_param, samples, to_addr)
+            if error == "no_samples":
+                self._send_json({"error": "no valid cached samples"}, status=404)
+                return
+            if error == "no_route":
+                self._send_json({"error": "no route found", "to": qs.get("to", [""])[0]}, status=404)
+                return
+
+            result["to"] = qs.get("to", [""])[0]
+            self._send_json(result)
+            return
+
         self._send_json({"error": "not found"}, status=404)
 
     def do_POST(self) -> None:
@@ -1198,6 +1251,7 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        _store_player_samples(uuid, samples)
         result, error = _route_from_samples(uuid, samples, to_addr)
         if error == "no_samples":
             self._send_json({"error": "no valid samples (all rejected or targets unknown)"}, status=400)
@@ -1241,7 +1295,7 @@ def main() -> None:
     print(
         "[collector] serving on :8730 "
         "(/route, /routes-to, /top-routes, /estimate-route, /compare, /client-ping, /snapshot, /geo, /health, "
-        "/player-targets, /player-route)"
+        "/player-targets, /player-route, /player-route-cached, /player-register, /player-link)"
     )
     server.serve_forever()
 
