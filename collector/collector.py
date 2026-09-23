@@ -34,11 +34,14 @@ from __future__ import annotations
 
 import heapq
 import json
+import os
+import secrets
 import socket
 import threading
 import time
 import urllib.error
 import urllib.request
+import uuid as uuid_lib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -712,6 +715,64 @@ def _get_cached_samples(uuid: str) -> list | None:
     return samples
 
 
+# Player registration registry - flat JSON file, no database (see spec:
+# volume is human-registration-rate, not per-request-rate). Loaded once
+# at import time; PLAYERS_FILE_PATH is a module-level variable (not a
+# constant) so tests can point it at a temp file without touching the
+# real collector/players.json.
+PLAYERS_FILE_PATH = os.path.join(os.path.dirname(__file__), "players.json")
+PLAYER_LINK_CODE_TTL_SECONDS = 900  # 15 minutes, single-use
+
+_players_lock = threading.Lock()
+_players: dict[str, dict] = {}
+
+_pending_links_lock = threading.Lock()
+_pending_links: dict[str, tuple[float, str]] = {}  # code -> (issued_at, uuid)
+
+
+def _load_players() -> dict:
+    try:
+        with open(PLAYERS_FILE_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_players() -> None:
+    with open(PLAYERS_FILE_PATH, "w", encoding="utf-8") as f:
+        json.dump(_players, f)
+
+
+def _valid_nick(value: object) -> bool:
+    return isinstance(value, str) and 1 <= len(value.strip()) <= 24
+
+
+def _valid_place(value: object) -> bool:
+    return isinstance(value, str) and 1 <= len(value.strip()) <= 64
+
+
+def _generate_link_code() -> str:
+    while True:
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        with _pending_links_lock:
+            if code not in _pending_links:
+                return code
+
+
+def _resolve_link_code(code: str) -> str | None:
+    """Single-use: removes the code from _pending_links on any lookup
+    (found-but-expired or found-and-valid), so a captured code can never
+    be redeemed twice even if the caller retries after a network blip."""
+    with _pending_links_lock:
+        entry = _pending_links.pop(code, None)
+    if entry is None:
+        return None
+    issued_at, uuid_str = entry
+    if time.time() - issued_at > PLAYER_LINK_CODE_TTL_SECONDS:
+        return None
+    return uuid_str
+
+
 def _read_json_body(handler: BaseHTTPRequestHandler, max_bytes: int = 65536) -> dict | None:
     try:
         length = int(handler.headers.get("Content-Length", "0"))
@@ -1220,6 +1281,14 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         qs = parse_qs(parsed.query)
 
+        if parsed.path == "/player-register":
+            self._handle_player_register()
+            return
+
+        if parsed.path == "/player-link":
+            self._handle_player_link()
+            return
+
         if parsed.path != "/player-route":
             self._send_json({"error": "not found"}, status=404)
             return
@@ -1263,6 +1332,66 @@ class Handler(BaseHTTPRequestHandler):
         result["to"] = qs.get("to", [""])[0]
         self._send_json(result)
 
+    def _handle_player_register(self) -> None:
+        body = _read_json_body(self)
+        if body is None:
+            self._send_json({"error": "invalid or missing JSON body"}, status=400)
+            return
+
+        nick = body.get("nick")
+        country = body.get("country")
+        city = body.get("city")
+        if not _valid_nick(nick) or not _valid_place(country) or not _valid_place(city):
+            self._send_json(
+                {"error": "nick (1-24 chars), country and city (1-64 chars each) are required"},
+                status=400,
+            )
+            return
+
+        new_uuid = str(uuid_lib.uuid4())
+        with _players_lock:
+            _players[new_uuid] = {
+                "nick": nick.strip(),
+                "country": country.strip(),
+                "city": city.strip(),
+                "registered_at": time.time(),
+            }
+            _save_players()
+
+        code = _generate_link_code()
+        with _pending_links_lock:
+            _pending_links[code] = (time.time(), new_uuid)
+
+        self._send_json({"uuid": new_uuid, "link_code": code})
+
+    def _handle_player_link(self) -> None:
+        body = _read_json_body(self)
+        if body is None:
+            self._send_json({"error": "invalid or missing JSON body"}, status=400)
+            return
+
+        code = body.get("link_code")
+        if not isinstance(code, str):
+            self._send_json({"error": "missing link_code"}, status=400)
+            return
+
+        resolved_uuid = _resolve_link_code(code)
+        if resolved_uuid is None:
+            self._send_json({"error": "unknown or expired link_code"}, status=404)
+            return
+
+        with _players_lock:
+            player = _players.get(resolved_uuid)
+        if player is None:
+            # registered uuid vanished from the registry between register
+            # and link (should not happen outside test isolation bugs,
+            # but fail closed rather than crash) - same 404 shape as an
+            # unknown code, no extra information leaked either way.
+            self._send_json({"error": "unknown or expired link_code"}, status=404)
+            return
+
+        self._send_json({"uuid": resolved_uuid, **player})
+
 
 def _geo_to_dict(info: GeoInfo | None) -> dict | None:
     if info is None:
@@ -1285,6 +1414,9 @@ def _geo_to_dict(info: GeoInfo | None) -> dict | None:
 
 
 def main() -> None:
+    global _players
+    _players = _load_players()
+
     print("[collector] running initial collection cycle...")
     collect_once()
 
