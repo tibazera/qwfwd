@@ -488,6 +488,56 @@ def dijkstra(start: tuple[str, int], end: tuple[str, int]) -> tuple[float, list[
     return raw_ping[end_state], path
 
 
+def _route_from_samples(
+    uuid: str, samples: list, to_addr: tuple[str, int]
+) -> tuple[dict | None, str | None]:
+    """Validates samples against the known-node set and runs
+    dijkstra_with_extra_edges from a synthetic player node. Returns
+    (result_dict, None) on success, or (None, error_reason) where
+    error_reason is "no_samples" (nothing valid to route from) or
+    "no_route" (valid samples, but dijkstra found no path) - callers
+    map these to different HTTP statuses depending on context (POST
+    vs. cached GET use the same reasons but slightly different
+    response bodies)."""
+    with graph.lock:
+        known_nodes = set(graph.edges.keys()) | set(graph.geo.keys())
+
+    player_node = ("player", 0)
+    extra_edges: list[Edge] = []
+    for sample in samples:
+        if not isinstance(sample, dict):
+            continue
+        ip = sample.get("ip")
+        port = sample.get("port")
+        rtt_ms = sample.get("rtt_ms")
+        if not isinstance(ip, str) or not isinstance(port, int):
+            continue
+        if not isinstance(rtt_ms, (int, float)) or not (0 < rtt_ms <= 2000):
+            continue
+        target = (ip, port)
+        if target not in known_nodes:
+            continue
+        extra_edges.append(Edge(to_ip=ip, to_port=port, ping=float(rtt_ms), source="player"))
+
+    if not extra_edges:
+        return None, "no_samples"
+
+    result = dijkstra_with_extra_edges(player_node, to_addr, extra_adjacency={player_node: extra_edges})
+    if result is None:
+        return None, "no_route"
+
+    total_ping, path = result
+    path = path[1:]  # drop the synthetic player_node from the response path
+    with graph.lock:
+        path_geo = [_geo_to_dict(graph.geo.get(addr)) for addr in path]
+    return {
+        "total_ping_ms": total_ping,
+        "hops": len(path) - 1,
+        "path": [f"{ip}:{port}" for ip, port in path],
+        "path_geo": path_geo,
+    }, None
+
+
 def _lookup_player_country(player_ip: str) -> str | None:
     """Best-effort country-code lookup for a player's request IP, via a
     free no-key geo-IP service. Returns None on any failure (timeout,
@@ -1148,48 +1198,16 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
-        with graph.lock:
-            known_nodes = set(graph.edges.keys()) | set(graph.geo.keys())
-
-        player_node = ("player", 0)
-        extra_edges: list[Edge] = []
-        for sample in samples:
-            if not isinstance(sample, dict):
-                continue
-            ip = sample.get("ip")
-            port = sample.get("port")
-            rtt_ms = sample.get("rtt_ms")
-            if not isinstance(ip, str) or not isinstance(port, int):
-                continue
-            if not isinstance(rtt_ms, (int, float)) or not (0 < rtt_ms <= 2000):
-                continue
-            target = (ip, port)
-            if target not in known_nodes:
-                continue
-            extra_edges.append(Edge(to_ip=ip, to_port=port, ping=float(rtt_ms), source="player"))
-
-        if not extra_edges:
+        result, error = _route_from_samples(uuid, samples, to_addr)
+        if error == "no_samples":
             self._send_json({"error": "no valid samples (all rejected or targets unknown)"}, status=400)
             return
-
-        result = dijkstra_with_extra_edges(player_node, to_addr, extra_adjacency={player_node: extra_edges})
-        if result is None:
+        if error == "no_route":
             self._send_json({"error": "no route found", "to": qs.get("to", [""])[0]}, status=404)
             return
 
-        total_ping, path = result
-        path = path[1:]  # drop the synthetic player_node from the response path
-        with graph.lock:
-            path_geo = [_geo_to_dict(graph.geo.get(addr)) for addr in path]
-        self._send_json(
-            {
-                "to": qs.get("to", [""])[0],
-                "total_ping_ms": total_ping,
-                "hops": len(path) - 1,
-                "path": [f"{ip}:{port}" for ip, port in path],
-                "path_geo": path_geo,
-            }
-        )
+        result["to"] = qs.get("to", [""])[0]
+        self._send_json(result)
 
 
 def _geo_to_dict(info: GeoInfo | None) -> dict | None:
