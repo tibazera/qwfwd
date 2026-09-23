@@ -1,0 +1,60 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="PlayerPingApp.MainWindow"
+        Title="qwfwd player ping"
+        Width="640" Height="560" MinWidth="540" MinHeight="420"
+        WindowStartupLocation="CenterScreen"
+        Background="#121218">
+
+  <Window.Styles>
+    <Style Selector="Button.accent">
+      <Setter Property="Background" Value="#58DC96" />
+      <Setter Property="Foreground" Value="#0E1412" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="CornerRadius" Value="18" />
+      <Setter Property="Padding" Value="18,8" />
+    </Style>
+    <Style Selector="Button.accent:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#6CEBAA" />
+    </Style>
+    <Style Selector="Border.card">
+      <Setter Property="Background" Value="#1C1C26" />
+      <Setter Property="CornerRadius" Value="12" />
+    </Style>
+    <Style Selector="ListBoxItem.unresponsive">
+      <Setter Property="Foreground" Value="#9696A5" />
+      <Setter Property="IsEnabled" Value="False" />
+    </Style>
+  </Window.Styles>
+
+  <Grid Margin="20" RowDefinitions="Auto,*,Auto,Auto">
+
+    <StackPanel Grid.Row="0" Margin="0,0,0,12">
+      <TextBlock Text="qwfwd  •  player ping" FontSize="18" FontWeight="Bold" Foreground="#EBEBF0" />
+      <TextBlock Text="escaneia seu ping real, escolha um servidor e veja a rota calculada até ele"
+                 Foreground="#9696A5" Margin="0,4,0,0" />
+    </StackPanel>
+
+    <Border Grid.Row="1" Classes="card" Margin="0,0,0,8">
+      <ListBox Name="ServerList" Background="Transparent" BorderThickness="0"
+                FontFamily="Consolas,Menlo,monospace" SelectionChanged="ServerList_SelectionChanged" />
+    </Border>
+
+    <Border Grid.Row="2" Classes="card" Padding="16" Margin="0,8,0,12" Height="180">
+      <TextBox Name="RouteResultBox" Background="Transparent" BorderThickness="0"
+                IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                FontFamily="Consolas,Menlo,monospace" Foreground="#EBEBF0" />
+    </Border>
+
+    <Grid Grid.Row="3" RowDefinitions="Auto,Auto">
+      <Grid Grid.Row="0" ColumnDefinitions="Auto,*">
+        <Button Name="FindRouteButton" Grid.Column="0" Classes="accent" Content="Find best route"
+                Click="OnScanClicked" />
+        <TextBlock Name="StatusLabel" Grid.Column="1" Text="Pronto." Foreground="#9696A5"
+                   VerticalAlignment="Center" Margin="16,0,0,0" />
+      </Grid>
+      <ProgressBar Name="ScanProgress" Grid.Row="1" Minimum="0" Maximum="100" Height="6" Margin="0,8,0,0" />
+    </Grid>
+
+  </Grid>
+</Window>

@@ -1,15 +1,14 @@
 # qwfwd player ping app (protótipo)
 
-App de bandeja (tray) pra Windows que mede seu ping UDP real (protocolo QW
+App (Avalonia, cross-platform) que mede seu ping UDP real (protocolo QW
 nativo, `getchallenge`) até os servidores conhecidos pelo coletor qwfwd, e
 pede ao backend a melhor rota calculada com esses dados.
 
-Protótipo: sem instalador, sem assinatura de código (o Windows Defender
-pode alertar no primeiro uso — normal para um binário não assinado).
+Protótipo: sem instalador, sem assinatura de código.
 
 ## Requisitos
 
-- .NET 8 SDK (Windows)
+- .NET 8 SDK (Windows, Linux ou macOS)
 - Um coletor `collector/collector.py` rodando (local ou remoto) — ver
   `docs/superpowers/plans/2026-09-20-player-ping-backend.md`
 
@@ -21,9 +20,11 @@ dotnet build
 dotnet run
 ```
 
-O ícone aparece na bandeja do sistema. Clique direito → "Find best route"
-mede o ping até os servidores conhecidos e mostra a melhor rota numa
-janela.
+Abre uma janela: "Find best route" mede o ping até os servidores
+conhecidos e mostra a melhor rota. Testado com `dotnet build` +
+`dotnet publish -r linux-x64 --self-contained false` no Windows; rodar de
+fato em Linux/macOS ainda não verificado neste ambiente (sem WSL com GUI
+X11/Wayland disponível aqui) — validar manualmente antes de distribuir.
 
 ## Configuração
 
