@@ -468,6 +468,15 @@ footer {
     </div>
     <div class="hint" id="hint" style="display:none">arraste / pinça pra zoom</div>
   </div>
+  <div id="registerPanel" class="nearby-card">
+    <div class="nearby-title">registro do jogador</div>
+    <p>vincule o app ao site pra sua rota ficar em cache mesmo com o app fechado</p>
+    <input id="registerNick" placeholder="seu nick" maxlength="24" style="box-sizing:border-box;width:100%;margin-top:9px;padding:9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font:11px var(--mono)">
+    <input id="registerCountry" placeholder="país" maxlength="64" style="box-sizing:border-box;width:100%;margin-top:9px;padding:9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font:11px var(--mono)">
+    <input id="registerCity" placeholder="cidade" maxlength="64" style="box-sizing:border-box;width:100%;margin-top:9px;padding:9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font:11px var(--mono)">
+    <button type="button" class="btn" onclick="handleRegisterClick()" style="margin-top:9px">registrar</button>
+    <p id="registerResult" class="empty-hint"></p>
+  </div>
   <aside id="panel">
     <h2>Detalhes</h2>
     <p class="empty-hint">Toque num proxy pra ver o ranking dos 10 melhores destinos a partir dele.</p>
@@ -515,7 +524,7 @@ const I18N = {
     chooseDestinationProxy: 'Este ponto é um proxy qwfwd e será usado apenas como hop.', cancelNearby: 'Sair do modo perto de mim', calculating: 'Medindo o primeiro hop e calculando rotas…',
     recommendations: 'Rotas recomendadas', basedOn: city => `Estimativa para ${city}`, approximate: 'estimado', measured: 'medido',
     playerEntry: 'você → entrada', meshLeg: 'malha → servidor', approxTotal: 'total aproximado', noRecommendations: 'Nenhuma rota conhecida para esse servidor.',
-    stunMeasured: 'medido via STUN', appMeasured: 'medido via app', copyRoute: 'copiar rota', copyHops: 'copiar somente hops', changeDestination: 'Escolher outro servidor', locationDisclaimer: 'O site tenta medir seu RTT real via o app local (se aberto) ou via STUN; nos demais usa uma estimativa geográfica claramente identificada.'
+    stunMeasured: 'medido via STUN', appMeasured: 'medido via app', cachedMeasured: 'medido via cache', copyRoute: 'copiar rota', copyHops: 'copiar somente hops', changeDestination: 'Escolher outro servidor', locationDisclaimer: 'O site tenta medir seu RTT real via o app local (se aberto) ou via STUN; nos demais usa uma estimativa geográfica claramente identificada.'
   },
   en: {
     title: 'QW Route Finder', brand: 'qwfwd route finder', connecting: 'connecting to collector...',
@@ -548,7 +557,7 @@ const I18N = {
     chooseDestinationProxy: 'This point is a qwfwd proxy and is used only as a hop.', cancelNearby: 'Exit nearby mode', calculating: 'Measuring the first hop and calculating routes…',
     recommendations: 'Recommended routes', basedOn: city => `Estimate for ${city}`, approximate: 'estimated', measured: 'measured',
     playerEntry: 'you → entry', meshLeg: 'mesh → server', approxTotal: 'approximate total', noRecommendations: 'No known route to this server.',
-    stunMeasured: 'measured via STUN', appMeasured: 'measured via app', copyRoute: 'copy route', copyHops: 'copy hops only', changeDestination: 'Choose another server', locationDisclaimer: 'The site tries to measure your real RTT via the local app (if open) or STUN; other entries use a clearly marked geographic estimate.'
+    stunMeasured: 'measured via STUN', appMeasured: 'measured via app', cachedMeasured: 'measured via cache', copyRoute: 'copy route', copyHops: 'copy hops only', changeDestination: 'Choose another server', locationDisclaimer: 'The site tries to measure your real RTT via the local app (if open) or STUN; other entries use a clearly marked geographic estimate.'
   }
 };
 let language = localStorage.getItem('qwfwd-language') || (navigator.language.toLowerCase().startsWith('pt') ? 'pt' : 'en');
@@ -990,6 +999,71 @@ async function measureViaLocalApp(addr, timeoutMs = 400) {
   }
 }
 
+// Reads the player's own uuid (issued by /player-register) from
+// localStorage and asks the collector for the player's own RTT to this
+// specific candidate proxy, recomputed from samples the app already
+// POSTed to /player-route - works even if the app isn't open right now,
+// unlike measureViaLocalApp. Only trusts a hops===0 result (a direct
+// player->candidate sample, no further relay) - a multi-hop cached route
+// can't be reused as a single leg RTT (it would double-count the
+// proxy-to-destination leg chooseNearbyDestination already adds via
+// route.total_ping_ms from /routes-to). Returns the RTT in ms on
+// success, null on any failure (unregistered player, expired cache, no
+// direct sample for this candidate, network error) - same null-on-
+// failure contract as measureViaLocalApp so callers chain it the same way.
+async function fetchCachedLegRtt(addr, timeoutMs = 800) {
+  const playerUuid = localStorage.getItem('qwfwd_player_uuid');
+  if (!playerUuid) return null;
+  try {
+    const resp = await fetch(
+      `${COLLECTOR_BASE}/player-route-cached?uuid=${encodeURIComponent(playerUuid)}&to=${encodeURIComponent(addr)}`,
+      { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) }
+    );
+    if (!resp.ok) return null;
+    const body = await resp.json();
+    if (body.hops !== 0 || typeof body.total_ping_ms !== 'number') return null;
+    return body.total_ping_ms;
+  } catch {
+    return null;
+  }
+}
+
+async function registerPlayer(nick, country, city) {
+  try {
+    const resp = await fetch(`${COLLECTOR_BASE}/player-register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nick, country, city }),
+    });
+    if (!resp.ok) return null;
+    return await resp.json(); // {uuid, link_code}
+  } catch {
+    return null;
+  }
+}
+
+async function handleRegisterClick() {
+  const nick = document.getElementById('registerNick').value.trim();
+  const country = document.getElementById('registerCountry').value.trim();
+  const city = document.getElementById('registerCity').value.trim();
+  const resultEl = document.getElementById('registerResult');
+
+  if (!nick || !country || !city) {
+    resultEl.textContent = 'preencha nick, país e cidade';
+    return;
+  }
+
+  resultEl.textContent = 'registrando...';
+  const result = await registerPlayer(nick, country, city);
+  if (!result) {
+    resultEl.textContent = 'falha ao registrar - tente novamente';
+    return;
+  }
+
+  localStorage.setItem('qwfwd_player_uuid', result.uuid);
+  resultEl.textContent = `registrado! cole este código no app: ${result.link_code}`;
+}
+
 async function measureProxyRttViaStun(addr, timeoutMs = 2200) {
   if (!window.RTCPeerConnection || !/^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(addr)) return null;
   const started = performance.now();
@@ -1181,8 +1255,13 @@ async function chooseNearbyDestination(destination) {
   const candidates = nearbyEntryCandidates(nearbyMode.location, nearbyMode.destination);
 
   try {
-    const measuredRtts = new Map(); // addr -> { rtt, source: 'app' | 'stun' }
+    const measuredRtts = new Map(); // addr -> { rtt, source: 'cached' | 'app' | 'stun' }
     await Promise.all(candidates.slice(0, 12).map(async candidate => {
+      const viaCache = await fetchCachedLegRtt(candidate.addr);
+      if (Number.isFinite(viaCache)) {
+        measuredRtts.set(candidate.addr, { rtt: viaCache, source: 'cached' });
+        return;
+      }
       const viaApp = await measureViaLocalApp(candidate.addr);
       if (Number.isFinite(viaApp)) {
         measuredRtts.set(candidate.addr, { rtt: viaApp, source: 'app' });
@@ -1232,7 +1311,8 @@ function renderNearbyResults() {
         const place = geo ? `${countryFlag(geo.country_code)} ${geo.city}` : pathAddr;
         return `<span class="hop-entry" title="${pathAddr}">${place}</span>`;
       }).join('<span class="hop-arrow" aria-hidden="true">&rarr;</span>');
-      const legSourceLabel = route.playerLegSource === 'app' ? tr('appMeasured')
+      const legSourceLabel = route.playerLegSource === 'cached' ? tr('cachedMeasured')
+        : route.playerLegSource === 'app' ? tr('appMeasured')
         : route.playerLegSource === 'stun' ? tr('stunMeasured')
         : tr('approximate');
       html += `<div class="route-row nearby-route"><div class="row-main"><span class="target">${index + 1}. ${countryFlag(entryGeo.country_code)} ${entryGeo.city}</span><span class="ping ${pingClass(route.estimatedTotalMs)}">${route.playerLegMeasured ? '' : '~'}${route.estimatedTotalMs.toFixed(0)}ms</span></div><div class="nearby-breakdown"><span>${tr('playerEntry')}: <b>${route.playerLegMeasured ? '' : '~'}${route.playerLegMs.toFixed(0)}ms</b> <span class="estimate-tag">${legSourceLabel}</span></span><br><span>${tr('meshLeg')}: <b>${route.total_ping_ms.toFixed(0)}ms</b> ${tr('measured')}</span><br><span>${route.hops} ${tr('hops')} · ${Math.round(route.candidate.distanceKm)} km</span></div><div class="hop-chain">${hopLine}</div><button class="btn copy-nearby" data-cmd="${command.replace(/"/g, '&quot;')}">${tr('copyRoute')}</button></div>`;
