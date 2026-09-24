@@ -58,6 +58,26 @@ site fica indisponível, o scan manual continua igual.
 
 Detalhes de arquitetura: `docs/superpowers/specs/2026-09-21-site-app-local-bridge-design.md`.
 
+## Vincular ao site (identidade estável)
+
+Além da ponte local (acima, exige o app aberto no momento do clique), dá
+pra vincular o app a um registro feito no site (nick, país, cidade) —
+assim o coletor guarda seus últimos pings por alguns minutos
+(`/player-route-cached`) e o site consegue calcular sua rota mesmo
+depois de você fechar o app.
+
+1. No site, preencha o formulário de registro (nick/país/cidade) — ele
+   mostra um código de 6 dígitos.
+2. No app, cole esse código no campo "código do site" (no topo da
+   janela) e clique "Vincular".
+3. O app confirma o nick e passa a usar o mesmo UUID do registro do
+   site a partir da próxima vez que abrir — o vínculo é permanente
+   (arquivo local `client-id.txt` sobrescrito), não precisa repetir a
+   cada sessão.
+
+O código expira em 15 minutos e só pode ser usado uma vez — se expirar,
+gere um novo no site.
+
 ## Escopo (v1)
 
 - Sem integração automática com ezQuake.
