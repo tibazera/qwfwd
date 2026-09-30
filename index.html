@@ -1069,7 +1069,7 @@ async function chooseUdpDestination(destination) {
 
   const health = await extensionRequest('health', undefined, 3000);
   if (udpMode !== run) return;
-  if (!health.ok) { run.helperError = health.error; run.phase = 'results'; renderUdpState(); return; }
+  if (!health.ok) { run.helperError = health.error; run.helperDetail = health.detail; run.phase = 'results'; renderUdpState(); return; }
   const candidates = udpEntryCandidates();
   const measuredRtts = new Map();
   const targets = [...candidates.map(c => c.addr), run.destination];
@@ -1122,7 +1122,7 @@ function renderUdpResults() {
       helper_timeout: language === 'pt' ? 'O helper não respondeu dentro do prazo.' : 'The helper did not respond in time.',
       origin_denied: language === 'pt' ? 'A extensão recusou o endereço desta página.' : 'The extension rejected this page address.'
     };
-    html += `<p class="empty-hint">${labels[udpMode.helperError] || tr('helperMissing')}</p>`;
+    html += `<p class="empty-hint">${labels[udpMode.helperError] || tr('helperMissing')}${udpMode.helperDetail ? `<br><code>${escapeHtml(udpMode.helperDetail)}</code>` : ''}</p>`;
   }
   if (udpMode.collectorFailed) html += '<p class="empty-hint">Mesh API unavailable — results incomplete.</p>';
   if (!routes.length) {
