@@ -588,9 +588,8 @@ function renderServerSearch(rawQuery) {
   container.innerHTML = results.map(([addr, info]) => {
     const compatible = Boolean(info.ktx_version || /\bktx\b/i.test(info.gamedir || '') || /\bktx\b/i.test(info.hostname || ''));
     const color = compatible ? 'var(--good)' : 'var(--warn)';
-    return `<button type="button" class="server-result" data-addr="${escapeHtml(addr)}"><strong><i class="compat-dot" style="background:${color}" title="${compatible ? 'KTX metadata found' : 'Compatibility unverified'}"></i>${countryFlag(info.country_code)}${escapeHtml(info.hostname || tr('noHostname'))}</strong><small>${escapeHtml(info.city || '?')}</small><span class="server-address">${escapeHtml(addr)}</span></button>`;
+    return `<button type="button" class="server-result" data-udp-destination="${escapeHtml(addr)}"><strong><i class="compat-dot" style="background:${color}" title="${compatible ? 'KTX metadata found' : 'Compatibility unverified'}"></i>${countryFlag(info.country_code)}${escapeHtml(info.hostname || tr('noHostname'))}</strong><small>${escapeHtml(info.city || '?')}</small><span class="server-address">${escapeHtml(addr)}</span></button>`;
   }).join('');
-  container.querySelectorAll('.server-result').forEach(button => button.addEventListener('click', () => startUdpMode(button.dataset.addr)));
 }
 function setLanguage(lang) {
   language = lang === 'en' ? 'en' : 'pt';
@@ -767,6 +766,10 @@ document.querySelectorAll('.lang-switch button').forEach(button => {
 });
 document.getElementById('panel').addEventListener('pointerdown', event => {
   if (window.matchMedia('(max-width: 720px)').matches) event.currentTarget.classList.add('open');
+});
+document.getElementById('panel').addEventListener('click', event => {
+  const button = event.target.closest('[data-udp-destination]');
+  if (button && event.currentTarget.contains(button)) startUdpMode(button.dataset.udpDestination);
 });
 setLanguage(language);
 
@@ -1222,7 +1225,7 @@ function showProxyGroup(group) {
     <div class="proxy-choice-list">`;
   const sortedServers = sortedCityServers(group);
   sortedServers.forEach((proxy, index) => {
-    html += `<button type="button" class="proxy-choice" data-addr="${proxy.addr}">
+    html += `<button type="button" class="proxy-choice" data-udp-destination="${escapeHtml(proxy.addr)}">
       <span class="proxy-index">${index + 1}</span>
       <span><span class="proxy-host">${countryFlag(proxy.info.country_code)}${escapeHtml(proxy.info.hostname || tr('noHostname'))}</span><span class="proxy-addr">${escapeHtml(proxy.addr)}</span></span>
     </button>`;
@@ -1230,9 +1233,6 @@ function showProxyGroup(group) {
   html += `</div>`;
   document.getElementById('panel').innerHTML = html;
   document.getElementById('panel').classList.add('open');
-  document.querySelectorAll('.proxy-choice').forEach(button => {
-    button.addEventListener('click', () => handleProxySelection(button.dataset.addr));
-  });
 }
 
 function selectNode(addr) {
