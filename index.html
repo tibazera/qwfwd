@@ -468,15 +468,6 @@ footer {
     </div>
     <div class="hint" id="hint" style="display:none">arraste / pinça pra zoom</div>
   </div>
-  <div id="registerPanel" class="udp-card">
-    <div class="udp-title">registro do jogador</div>
-    <p>vincule o app ao site pra sua rota ficar em cache mesmo com o app fechado</p>
-    <input id="registerNick" placeholder="seu nick" maxlength="24" style="box-sizing:border-box;width:100%;margin-top:9px;padding:9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font:11px var(--mono)">
-    <input id="registerCountry" placeholder="país" maxlength="64" style="box-sizing:border-box;width:100%;margin-top:9px;padding:9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font:11px var(--mono)">
-    <input id="registerCity" placeholder="cidade" maxlength="64" style="box-sizing:border-box;width:100%;margin-top:9px;padding:9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font:11px var(--mono)">
-    <button type="button" class="btn" onclick="handleRegisterClick()" style="margin-top:9px">registrar</button>
-    <p id="registerResult" class="empty-hint"></p>
-  </div>
   <aside id="panel">
     <h2>Detalhes</h2>
     <p class="empty-hint">Toque num proxy pra ver o ranking dos 10 melhores destinos a partir dele.</p>
@@ -983,42 +974,6 @@ async function measureViaLocalApp(addr) {
   return Number.isFinite(data.rtt_ms) && data.rtt_ms > 0 ? data.rtt_ms : null;
 }
 
-async function registerPlayer(nick, country, city) {
-  try {
-    const resp = await fetch(`${COLLECTOR_BASE}/player-register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nick, country, city }),
-    });
-    if (!resp.ok) return null;
-    return await resp.json(); // {uuid, link_code}
-  } catch {
-    return null;
-  }
-}
-
-async function handleRegisterClick() {
-  const nick = document.getElementById('registerNick').value.trim();
-  const country = document.getElementById('registerCountry').value.trim();
-  const city = document.getElementById('registerCity').value.trim();
-  const resultEl = document.getElementById('registerResult');
-
-  if (!nick || !country || !city) {
-    resultEl.textContent = 'preencha nick, país e cidade';
-    return;
-  }
-
-  resultEl.textContent = 'registrando...';
-  const result = await registerPlayer(nick, country, city);
-  if (!result) {
-    resultEl.textContent = 'falha ao registrar - tente novamente';
-    return;
-  }
-
-  localStorage.setItem('qwfwd_player_uuid', result.uuid);
-  resultEl.textContent = `registrado! cole este código no app: ${result.link_code}`;
-}
-
 function udpEntryCandidates() {
   return Object.entries(liveData.proxies || {}).map(([addr, info]) => ({ addr, info }));
 }
@@ -1156,11 +1111,19 @@ async function chooseUdpDestination(destination) {
 function renderUdpResults() {
   const routes = udpMode.routes;
   const destinationGeo = liveData.nodes[udpMode.destination];
-  let html = `<h2>${tr('recommendations')}</h2><div class="udp-card"><div class="udp-title">${tr('measured')}</div><p>${destinationGeo ? countryFlag(destinationGeo.country_code) + ' ' + destinationGeo.city : udpMode.destination}</p><p>${tr('locationDisclaimer')}</p></div>`;
-  if (udpMode.helperError) html += `<p class="empty-hint">${tr('helperMissing')}</p>`;
+  let html = `<h2>${tr('recommendations')}</h2><div class="udp-card"><div class="udp-title">${routes.length ? tr('measured') : tr('udpTitle')}</div><p>${destinationGeo ? countryFlag(destinationGeo.country_code) + ' ' + destinationGeo.city : udpMode.destination}</p><p>${tr('locationDisclaimer')}</p></div>`;
+  if (udpMode.helperError) {
+    const labels = {
+      extension_unavailable: language === 'pt' ? 'A extensão não respondeu. Ative QW Mesh UDP Ping no Chrome e recarregue esta página.' : 'The extension did not respond. Enable QW Mesh UDP Ping in Chrome and reload this page.',
+      helper_unavailable: language === 'pt' ? 'A extensão respondeu, mas não conseguiu iniciar o helper instalado.' : 'The extension responded, but could not start the installed helper.',
+      helper_timeout: language === 'pt' ? 'O helper não respondeu dentro do prazo.' : 'The helper did not respond in time.',
+      origin_denied: language === 'pt' ? 'A extensão recusou o endereço desta página.' : 'The extension rejected this page address.'
+    };
+    html += `<p class="empty-hint">${labels[udpMode.helperError] || tr('helperMissing')}</p>`;
+  }
   if (udpMode.collectorFailed) html += '<p class="empty-hint">Mesh API unavailable — results incomplete.</p>';
   if (!routes.length) {
-    html += `<p class="empty-hint">${tr('noRecommendations')}</p>`;
+    if (!udpMode.helperError) html += `<p class="empty-hint">${tr('noRecommendations')}</p>`;
   } else {
     html += `<div class="route-list">`;
     routes.forEach((route, index) => {
