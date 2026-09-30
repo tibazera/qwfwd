@@ -204,20 +204,20 @@ svg#map:active { cursor: grabbing; }
 .server-flag-fallback { display: inline-block; width: 20px; margin-right: 6px; text-align: center; }
 .server-result .server-address { grid-column: 1 / -1; color: var(--text-dim); font: 9.5px var(--mono); }
 .compat-dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:5px; vertical-align:middle; }
-.nearby-card {
+.udp-card {
   padding: 11px 12px; border: 1px solid var(--accent); border-radius: 8px;
   background: var(--accent-glow);
 }
-.nearby-card .nearby-title { font-size: 12px; font-weight: 650; color: var(--accent); }
-.nearby-card p { margin: 5px 0 0; font-size: 10.5px; line-height: 1.5; color: var(--text-dim); }
-.nearby-card .btn { margin-top: 9px; background: var(--surface); }
-.nearby-location { font: 600 11px var(--mono); color: var(--accent); }
-.nearby-route { cursor: default; }
-.nearby-route:hover { border-color: var(--border); background: transparent; }
-.nearby-breakdown { margin-top: 5px; font: 9.5px/1.55 var(--mono); color: var(--text-dim); }
-.nearby-breakdown b { color: var(--text); font-weight: 600; }
-.nearby-route .hop-chain { margin-top: 6px; }
-.estimate-tag { color: var(--warn); font-size: 9px; font-weight: 600; }
+.udp-card .udp-title { font-size: 12px; font-weight: 650; color: var(--accent); }
+.udp-card p { margin: 5px 0 0; font-size: 10.5px; line-height: 1.5; color: var(--text-dim); }
+.udp-card .btn { margin-top: 9px; background: var(--surface); }
+.udp-location { font: 600 11px var(--mono); color: var(--accent); }
+.udp-route { cursor: default; }
+.udp-route:hover { border-color: var(--border); background: transparent; }
+.udp-breakdown { margin-top: 5px; font: 9.5px/1.55 var(--mono); color: var(--text-dim); }
+.udp-breakdown b { color: var(--text); font-weight: 600; }
+.udp-route .hop-chain { margin-top: 6px; }
+.measurement-tag { color: var(--warn); font-size: 9px; font-weight: 600; }
 .user-location-marker { fill: var(--warn); stroke: var(--surface); stroke-width: 1.5; }
 .route-path {
   stroke-dasharray: 1400;
@@ -468,8 +468,8 @@ footer {
     </div>
     <div class="hint" id="hint" style="display:none">arraste / pinça pra zoom</div>
   </div>
-  <div id="registerPanel" class="nearby-card">
-    <div class="nearby-title">registro do jogador</div>
+  <div id="registerPanel" class="udp-card">
+    <div class="udp-title">registro do jogador</div>
     <p>vincule o app ao site pra sua rota ficar em cache mesmo com o app fechado</p>
     <input id="registerNick" placeholder="seu nick" maxlength="24" style="box-sizing:border-box;width:100%;margin-top:9px;padding:9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font:11px var(--mono)">
     <input id="registerCountry" placeholder="país" maxlength="64" style="box-sizing:border-box;width:100%;margin-top:9px;padding:9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font:11px var(--mono)">
@@ -516,15 +516,15 @@ const I18N = {
     faster: n => `${n}ms mais rápido via malha`, slower: n => `${n}ms mais lento via malha`, same: 'mesmo tempo, direto já é ótimo',
     proxiesIn: city => `Proxies em ${city}`, chooseProxy: 'Escolha o proxy exato que deseja usar como origem.', proxyCount: n => `${n} proxies nesta cidade`,
     serversIn: city => `Servidores em ${city}`, chooseServer: 'Escolha o servidor Quake de destino.', serverCount: n => `${n} servidores nesta cidade`,
-    nearbyTitle: 'Rota perto de mim', nearbyIntro: 'Use a localização do navegador ou marque sua posição no mapa para comparar proxies de entrada.',
-    nearbyButton: 'Encontrar minha melhor rota', nearbyPrivacy: 'O navegador pedirá permissão para usar sua localização. Seu IP não será usado para descobrir sua cidade.',
-    locating: 'Aguardando a localização do navegador…', locationFailed: 'Não foi possível obter a localização do navegador.', retry: 'Tentar novamente',
-    detected: 'Localização escolhida', browserLocation: 'Localização do navegador', manualLocation: 'Posição manual', manualInstructions: 'Toque no mapa para marcar de onde você está jogando.', useManualLocation: 'Corrigir localização no mapa', chooseDestination: 'Escolha um servidor no mapa ou digite o endereço do servidor Quake.',
-    serverPlaceholder: 'IP:porta do servidor (ex.: 203.0.113.10:27500)', findServerRoute: 'Calcular rota para o servidor', invalidServer: 'Digite um servidor Quake válido no formato IP:porta. Endereços qwfwd e porta 30000 não são destinos de jogo.',
-    chooseDestinationProxy: 'Este ponto é um proxy qwfwd e será usado apenas como hop.', cancelNearby: 'Sair do modo perto de mim', calculating: 'Medindo o primeiro hop e calculando rotas…',
-    recommendations: 'Rotas recomendadas', basedOn: city => `Estimativa para ${city}`, approximate: 'estimado', measured: 'medido',
-    playerEntry: 'você → entrada', meshLeg: 'malha → servidor', approxTotal: 'total aproximado', noRecommendations: 'Nenhuma rota conhecida para esse servidor.',
-    stunMeasured: 'medido via STUN', appMeasured: 'medido via app', cachedMeasured: 'medido via cache', copyRoute: 'copiar rota', copyHops: 'copiar somente hops', changeDestination: 'Escolher outro servidor', locationDisclaimer: 'O site tenta medir seu RTT real via o app local (se aberto) ou via STUN; nos demais usa uma estimativa geográfica claramente identificada.'
+    helperMissing: 'Extensão ou helper indisponível. Instale os dois, ative a extensão e recarregue esta página.', udpTitle: 'Ping UDP real', udpIntro: 'Instale a extensão QW Mesh e o helper, depois escolha o servidor. Os proxies serão medidos pela sua conexão.',
+    udpButton: 'Medir minha rota',
+      retry: 'Tentar novamente',
+    detected: 'Sua conexão',     chooseDestination: 'Escolha um servidor no mapa ou digite o endereço do servidor Quake.',
+    serverPlaceholder: 'IP:porta do servidor (ex.: 203.0.113.10:27500)', findServerRoute: 'Calcular rota para o servidor', invalidServer: 'Digite um servidor Quake válido no formato IP:porta. Escolha um servidor de jogo, não um proxy.',
+    chooseDestinationProxy: 'Este ponto é um proxy qwfwd e será usado apenas como hop.', cancelUdp: 'Sair da medição', calculating: 'Medindo o primeiro hop e calculando rotas…',
+    recommendations: 'Rotas recomendadas',   measured: 'medido',
+    playerEntry: 'você → entrada', meshLeg: 'malha → servidor', approxTotal: 'total aproximado', noRecommendations: 'Sem medição UDP utilizável. Confira a extensão e o helper e tente novamente.',
+     appMeasured: 'UDP local',  copyRoute: 'copiar rota', copyHops: 'copiar somente hops', changeDestination: 'Escolher outro servidor', locationDisclaimer: 'Requer extensão QW Mesh e helper instalados. Total via proxy = soma dos trechos medidos, não um teste fim a fim.'
   },
   en: {
     title: 'QW Route Finder', brand: 'qwfwd route finder', connecting: 'connecting to collector...',
@@ -549,23 +549,23 @@ const I18N = {
     faster: n => `${n}ms faster via mesh`, slower: n => `${n}ms slower via mesh`, same: 'same time; direct is already optimal',
     proxiesIn: city => `Proxies in ${city}`, chooseProxy: 'Choose the exact proxy you want to use as the origin.', proxyCount: n => `${n} proxies in this city`,
     serversIn: city => `Servers in ${city}`, chooseServer: 'Choose the destination Quake server.', serverCount: n => `${n} servers in this city`,
-    nearbyTitle: 'Route near me', nearbyIntro: 'Use browser location or mark your position on the map to compare entry proxies.',
-    nearbyButton: 'Find my best route', nearbyPrivacy: 'The browser will ask permission to use your location. Your IP is not used to determine your city.',
-    locating: 'Waiting for browser location…', locationFailed: 'The browser location could not be obtained.', retry: 'Try again',
-    detected: 'Selected location', browserLocation: 'Browser location', manualLocation: 'Manual position', manualInstructions: 'Select your playing location on the map.', useManualLocation: 'Correct location on map', chooseDestination: 'Choose a server on the map or enter its Quake server address.',
-    serverPlaceholder: 'server IP:port (e.g. 203.0.113.10:27500)', findServerRoute: 'Calculate route to server', invalidServer: 'Enter a valid Quake server as IP:port. qwfwd addresses and port 30000 are not game destinations.',
-    chooseDestinationProxy: 'This point is a qwfwd proxy and is used only as a hop.', cancelNearby: 'Exit nearby mode', calculating: 'Measuring the first hop and calculating routes…',
-    recommendations: 'Recommended routes', basedOn: city => `Estimate for ${city}`, approximate: 'estimated', measured: 'measured',
-    playerEntry: 'you → entry', meshLeg: 'mesh → server', approxTotal: 'approximate total', noRecommendations: 'No known route to this server.',
-    stunMeasured: 'measured via STUN', appMeasured: 'measured via app', cachedMeasured: 'measured via cache', copyRoute: 'copy route', copyHops: 'copy hops only', changeDestination: 'Choose another server', locationDisclaimer: 'The site tries to measure your real RTT via the local app (if open) or STUN; other entries use a clearly marked geographic estimate.'
+    helperMissing: 'Extension or helper unavailable. Install both, enable the extension and reload this page.', udpTitle: 'Real UDP ping', udpIntro: 'Install the QW Mesh extension and helper, then choose a server. Proxies will be measured from your connection.',
+    udpButton: 'Measure my route',
+      retry: 'Try again',
+    detected: 'Your connection',     chooseDestination: 'Choose a server on the map or enter its Quake server address.',
+    serverPlaceholder: 'server IP:port (e.g. 203.0.113.10:27500)', findServerRoute: 'Calculate route to server', invalidServer: 'Enter a valid Quake server as IP:port. Choose a game server, not a proxy.',
+    chooseDestinationProxy: 'This point is a qwfwd proxy and is used only as a hop.', cancelUdp: 'Exit measurement', calculating: 'Measuring the first hop and calculating routes…',
+    recommendations: 'Recommended routes',   measured: 'measured',
+    playerEntry: 'you → entry', meshLeg: 'mesh → server', approxTotal: 'approximate total', noRecommendations: 'No usable UDP measurement. Check the extension and helper and retry.',
+     appMeasured: 'local UDP',  copyRoute: 'copy route', copyHops: 'copy hops only', changeDestination: 'Choose another server', locationDisclaimer: 'Requires the QW Mesh extension and helper installed. Proxy total sums measured legs; it is not an end-to-end test.'
   }
 };
 let language = localStorage.getItem('qwfwd-language') || (navigator.language.toLowerCase().startsWith('pt') ? 'pt' : 'en');
 function tr(key, ...args) { const value = I18N[language][key]; return typeof value === 'function' ? value(...args) : value; }
 function renderEmptyPanel() {
-  document.getElementById('panel').innerHTML = `<div class="server-finder"><label for="server-search">${tr('findServer')}</label><input class="server-search" id="server-search" autocomplete="off" spellcheck="false" placeholder="${tr('searchServer')}"><div class="server-results" id="server-results"><p class="empty-hint">${tr('searchHint')}</p></div></div><div class="nearby-card"><div class="nearby-title">${tr('nearbyTitle')}</div><p>${tr('nearbyIntro')}</p><button type="button" class="btn" id="start-nearby">${tr('nearbyButton')}</button></div><p class="empty-hint">${tr('intro')}</p><p class="empty-hint" style="border-top:1px solid var(--border);padding-top:10px">${tr('note')}</p>`;
+  document.getElementById('panel').innerHTML = `<div class="server-finder"><label for="server-search">${tr('findServer')}</label><input class="server-search" id="server-search" autocomplete="off" spellcheck="false" placeholder="${tr('searchServer')}"><div class="server-results" id="server-results"><p class="empty-hint">${tr('searchHint')}</p></div></div><div class="udp-card"><div class="udp-title">${tr('udpTitle')}</div><p>${tr('udpIntro')}</p><button type="button" class="btn" id="start-udp">${tr('udpButton')}</button></div><p class="empty-hint">${tr('intro')}</p><p class="empty-hint" style="border-top:1px solid var(--border);padding-top:10px">${tr('note')}</p>`;
   document.getElementById('server-search')?.addEventListener('input', event => renderServerSearch(event.target.value));
-  document.getElementById('start-nearby')?.addEventListener('click', startNearbyMode);
+  document.getElementById('start-udp')?.addEventListener('click', startUdpMode);
 }
 function escapeHtml(value) {
   return String(value ?? '').replace(/\uFFFD/g, '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
@@ -599,7 +599,7 @@ function renderServerSearch(rawQuery) {
     const color = compatible ? 'var(--good)' : 'var(--warn)';
     return `<button type="button" class="server-result" data-addr="${escapeHtml(addr)}"><strong><i class="compat-dot" style="background:${color}" title="${compatible ? 'KTX metadata found' : 'Compatibility unverified'}"></i>${countryFlag(info.country_code)}${escapeHtml(info.hostname || tr('noHostname'))}</strong><small>${escapeHtml(info.city || '?')}</small><span class="server-address">${escapeHtml(addr)}</span></button>`;
   }).join('');
-  container.querySelectorAll('.server-result').forEach(button => button.addEventListener('click', () => startNearbyMode(button.dataset.addr)));
+  container.querySelectorAll('.server-result').forEach(button => button.addEventListener('click', () => startUdpMode(button.dataset.addr)));
 }
 function setLanguage(lang) {
   language = lang === 'en' ? 'en' : 'pt';
@@ -622,7 +622,7 @@ function setLanguage(lang) {
     document.getElementById('subtitle').textContent = tr('connecting');
     document.getElementById('loading-text').textContent = tr('loading');
   }
-  if (nearbyMode.active) renderNearbyState();
+  if (udpMode.active) renderUdpState();
   else if (originAddr) showTopRoutes(originAddr);
   else if (activeCityGroup) showProxyGroup(activeCityGroup);
   else renderEmptyPanel();
@@ -741,7 +741,7 @@ zoomGroup.selectAll('path.land')
 const edgesGroup = zoomGroup.append('g');
 const nodesGroup = zoomGroup.append('g');
 const compareGroup = zoomGroup.append('g');
-const nearbyGroup = zoomGroup.append('g');
+const udpGroup = zoomGroup.append('g');
 
 const zoom = d3.zoom()
   .scaleExtent([1, 12])
@@ -751,7 +751,7 @@ const zoom = d3.zoom()
     nodesGroup.selectAll('[data-base-r]').attr('r', function () {
       return Number(this.getAttribute('data-base-r')) / ev.transform.k;
     });
-    nearbyGroup.selectAll('[data-base-r]').attr('r', function () {
+    udpGroup.selectAll('[data-base-r]').attr('r', function () {
       return Number(this.getAttribute('data-base-r')) / ev.transform.k;
     });
     nodesGroup.selectAll('[data-base-font]').attr('font-size', function () {
@@ -769,7 +769,7 @@ let destAddr = null;
 let activeCityGroup = null;
 let cityGroups = new Map();
 let currentZoomK = 1;
-let nearbyMode = { active: false, phase: 'idle', location: null, destination: null, routes: [] };
+let udpMode = { active: false, phase: 'idle', location: null, destination: null, routes: [] };
 
 document.querySelectorAll('.lang-switch button').forEach(button => {
   button.addEventListener('click', () => setLanguage(button.dataset.lang));
@@ -926,7 +926,7 @@ function renderMap(data) {
   document.getElementById('loading-msg').style.display = 'none';
   document.getElementById('legend').style.display = 'flex';
   document.getElementById('hint').style.display = 'block';
-  if (!nearbyMode.active && !activeCityGroup && !originAddr) {
+  if (!udpMode.active && !activeCityGroup && !originAddr) {
     const previousSearch = document.getElementById('server-search')?.value || '';
     renderEmptyPanel();
     if (previousSearch) {
@@ -964,68 +964,23 @@ setInterval(async () => {
 }, 20000);
 setInterval(() => updateAge(liveData.lastCollectedAt), 5000);
 
-function haversineKm(a, b) {
-  const rad = degrees => degrees * Math.PI / 180;
-  const dLat = rad(b.lat - a.lat);
-  const dLon = rad(b.lon - a.lon);
-  const lat1 = rad(a.lat);
-  const lat2 = rad(b.lat);
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
-  return 6371 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+function extensionRequest(op, target, timeoutMs = 16000) {
+  return new Promise(resolve => {
+    const id = crypto.randomUUID();
+    const finish = result => { clearTimeout(timer); window.removeEventListener('message', listener); resolve(result); };
+    const listener = event => {
+      const msg = event.data;
+      if (event.source === window && event.origin === location.origin && msg?.channel === 'qwfwd-udp-v1' &&
+          msg.direction === 'response' && msg.id === id) finish(msg.result || { error: 'invalid_response' });
+    };
+    const timer = setTimeout(() => finish({ error: 'extension_unavailable' }), timeoutMs);
+    window.addEventListener('message', listener);
+    window.postMessage({ channel: 'qwfwd-udp-v1', direction: 'request', id, op, target }, location.origin);
+  });
 }
-
-function estimatePlayerLegMs(distanceKm) {
-  // Geographic estimate only: approximate Internet path inflation plus
-  // access-network overhead. It ranks likely entries; it is not a ping.
-  return Math.max(3, 5 + distanceKm * 0.014);
-}
-
-// Real ping via the optional local desktop app (player-ping-app), if it's
-// running on the player's machine - see
-// docs/superpowers/specs/2026-09-21-site-app-local-bridge-design.md.
-// Silent, short-timeout probe: most visitors don't have the app open, and
-// this must never surface an error or delay the page for them.
-const LOCAL_APP_BASE = 'http://127.0.0.1:5757';
-async function measureViaLocalApp(addr, timeoutMs = 400) {
-  try {
-    const response = await fetch(`${LOCAL_APP_BASE}/ping?target=${encodeURIComponent(addr)}`, {
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!response.ok) return null;
-    const data = await response.json();
-    return Number.isFinite(data.rtt_ms) ? data.rtt_ms : null;
-  } catch (error) {
-    return null; // app not running, or didn't answer in time - normal case
-  }
-}
-
-// Reads the player's own uuid (issued by /player-register) from
-// localStorage and asks the collector for the player's own RTT to this
-// specific candidate proxy, recomputed from samples the app already
-// POSTed to /player-route - works even if the app isn't open right now,
-// unlike measureViaLocalApp. Only trusts a hops===0 result (a direct
-// player->candidate sample, no further relay) - a multi-hop cached route
-// can't be reused as a single leg RTT (it would double-count the
-// proxy-to-destination leg chooseNearbyDestination already adds via
-// route.total_ping_ms from /routes-to). Returns the RTT in ms on
-// success, null on any failure (unregistered player, expired cache, no
-// direct sample for this candidate, network error) - same null-on-
-// failure contract as measureViaLocalApp so callers chain it the same way.
-async function fetchCachedLegRtt(addr, timeoutMs = 800) {
-  const playerUuid = localStorage.getItem('qwfwd_player_uuid');
-  if (!playerUuid) return null;
-  try {
-    const resp = await fetch(
-      `${COLLECTOR_BASE}/player-route-cached?uuid=${encodeURIComponent(playerUuid)}&to=${encodeURIComponent(addr)}`,
-      { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) }
-    );
-    if (!resp.ok) return null;
-    const body = await resp.json();
-    if (body.hops !== 0 || typeof body.total_ping_ms !== 'number') return null;
-    return body.total_ping_ms;
-  } catch {
-    return null;
-  }
+async function measureViaLocalApp(addr) {
+  const data = await extensionRequest('ping', addr);
+  return Number.isFinite(data.rtt_ms) && data.rtt_ms > 0 ? data.rtt_ms : null;
 }
 
 async function registerPlayer(nick, country, city) {
@@ -1064,158 +1019,55 @@ async function handleRegisterClick() {
   resultEl.textContent = `registrado! cole este código no app: ${result.link_code}`;
 }
 
-async function measureProxyRttViaStun(addr, timeoutMs = 2200) {
-  if (!window.RTCPeerConnection || !/^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(addr)) return null;
-  const started = performance.now();
-  let pc;
-  return new Promise(async resolve => {
-    let finished = false;
-    const finish = value => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timer);
-      try { pc?.close(); } catch (error) { /* already closed */ }
-      resolve(value);
-    };
-    const timer = setTimeout(() => finish(null), timeoutMs);
-    try {
-      pc = new RTCPeerConnection({ iceServers: [{ urls: `stun:${addr}` }] });
-      pc.createDataChannel('qwfwd-rtt');
-      pc.onicecandidate = event => {
-        const text = event.candidate?.candidate || '';
-        if (/\btyp srflx\b/.test(text)) finish(Math.max(1, performance.now() - started));
-      };
-      await pc.setLocalDescription(await pc.createOffer());
-    } catch (error) {
-      finish(null);
-    }
-  });
+function udpEntryCandidates() {
+  return Object.entries(liveData.proxies || {}).map(([addr, info]) => ({ addr, info }));
 }
 
-function nearbyEntryCandidates(location, destination) {
-  const sourcesWithEdges = new Set(liveData.edges.map(edge => edge.from));
-  const all = Object.entries(liveData.proxies || {})
-    .filter(([addr, info]) => (addr === destination || sourcesWithEdges.has(addr)) && Number.isFinite(Number(info.lat)) && Number.isFinite(Number(info.lon)))
-    .map(([addr, info]) => ({ addr, info, distanceKm: haversineKm(location, { lat: Number(info.lat), lon: Number(info.lon) }) }))
-    .sort((a, b) => a.distanceKm - b.distanceKm);
-
-  if (!all.length) return [];
-
-  // The first hop must be reasonably close to the player. Without a real
-  // browser-to-proxy ping, allowing arbitrary worldwide entries can recommend
-  // a large detour (for example Brazil -> Miami -> Lisbon) just because the
-  // measured mesh leg after Miami happens to look good.
-  const nearestKm = all[0].distanceKm;
-  const plausibleRadiusKm = Math.max(750, nearestKm + 1500, nearestKm * 1.5);
-  return all.filter(candidate =>
-    candidate.distanceKm <= plausibleRadiusKm ||
-    (location.countryCode && candidate.info.country_code === location.countryCode)
-  ).slice(0, 32);
-}
-
-function renderNearbyState() {
-  if (nearbyMode.phase === 'locating') {
-    document.getElementById('panel').innerHTML = `<h2>${tr('nearbyTitle')}</h2><p class="empty-hint">${tr('nearbyPrivacy')}</p><div class="overlay-msg" style="position:static;transform:none;margin:18px 0"><div class="spinner"></div>${tr('locating')}</div>`;
-    return;
-  }
-  if (nearbyMode.phase === 'error') {
-    document.getElementById('panel').innerHTML = `<h2>${tr('nearbyTitle')}</h2><p class="empty-hint">${tr('locationFailed')}</p><button class="btn" id="retry-nearby">${tr('retry')}</button><button class="btn" id="manual-nearby">${tr('useManualLocation')}</button><button class="btn" id="cancel-nearby">${tr('cancelNearby')}</button>`;
-    document.getElementById('retry-nearby')?.addEventListener('click', startNearbyMode);
-    document.getElementById('manual-nearby')?.addEventListener('click', startManualLocationMode);
-    document.getElementById('cancel-nearby')?.addEventListener('click', cancelNearbyMode);
-    return;
-  }
-  if (nearbyMode.phase === 'manual') {
-    document.getElementById('panel').innerHTML = `<h2>${tr('nearbyTitle')}</h2><div class="nearby-card"><div class="nearby-title">${tr('manualLocation')}</div><p>${tr('manualInstructions')}</p></div><button class="btn" id="cancel-nearby">${tr('cancelNearby')}</button>`;
-    document.getElementById('cancel-nearby')?.addEventListener('click', cancelNearbyMode);
-    return;
-  }
-  if (nearbyMode.phase === 'choosing') {
-    const loc = nearbyMode.location;
-    document.getElementById('panel').innerHTML = `<h2>${tr('nearbyTitle')}</h2><div class="nearby-card"><div class="nearby-title">${tr('detected')}</div><p class="nearby-location">${loc.city}</p><p>${tr('chooseDestination')}</p><form id="nearby-server-form"><input id="nearby-server" autocomplete="off" spellcheck="false" placeholder="${tr('serverPlaceholder')}" style="box-sizing:border-box;width:100%;margin-top:9px;padding:9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font:11px var(--mono)"><button class="btn" type="submit">${tr('findServerRoute')}</button><p id="nearby-server-error" class="empty-hint" style="display:none;color:var(--bad)">${tr('invalidServer')}</p></form><button class="btn" id="manual-nearby">${tr('useManualLocation')}</button></div><p class="empty-hint">${tr('locationDisclaimer')}</p><button class="btn" id="cancel-nearby">${tr('cancelNearby')}</button>`;
-    document.getElementById('nearby-server-form')?.addEventListener('submit', event => {
+function renderUdpState() {
+  if (udpMode.phase === 'choosing') {
+    document.getElementById('panel').innerHTML = `<h2>${tr('udpTitle')}</h2><div class="udp-card"><div class="udp-title">${tr('detected')}</div><p>${tr('chooseDestination')}</p><form id="udp-server-form"><input id="udp-server" autocomplete="off" spellcheck="false" placeholder="${tr('serverPlaceholder')}" style="box-sizing:border-box;width:100%;margin-top:9px;padding:9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font:11px var(--mono)"><button class="btn" type="submit">${tr('findServerRoute')}</button><p id="udp-server-error" class="empty-hint" style="display:none;color:var(--bad)">${tr('invalidServer')}</p></form></div><p class="empty-hint">${tr('locationDisclaimer')}</p><button class="btn" id="cancel-udp">${tr('cancelUdp')}</button>`;
+    document.getElementById('udp-server-form')?.addEventListener('submit', event => {
       event.preventDefault();
-      const value = document.getElementById('nearby-server').value.trim();
+      const value = document.getElementById('udp-server').value.trim();
       const port = Number(value.slice(value.lastIndexOf(':') + 1));
       const isKnownProxy = Boolean(liveData.proxies?.[value]);
-      if (!/^[^\s:]+:\d{1,5}$/.test(value) || port < 1 || port > 65535 || port === 30000 || isKnownProxy) {
-        document.getElementById('nearby-server-error').style.display = 'block';
+      if (!/^[^\s:]+:\d{1,5}$/.test(value) || port < 1 || port > 65535 || isKnownProxy) {
+        document.getElementById('udp-server-error').style.display = 'block';
         return;
       }
-      chooseNearbyDestination(value);
+      chooseUdpDestination(value);
     });
-    document.getElementById('manual-nearby')?.addEventListener('click', startManualLocationMode);
-    document.getElementById('cancel-nearby')?.addEventListener('click', cancelNearbyMode);
-    drawNearbyLocation();
+    document.getElementById('cancel-udp')?.addEventListener('click', cancelUdpMode);
     return;
   }
-  if (nearbyMode.phase === 'calculating') {
-    document.getElementById('panel').innerHTML = `<h2>${tr('nearbyTitle')}</h2><div class="nearby-location">${nearbyMode.location.city} → ${nearbyMode.destination}</div><div class="overlay-msg" style="position:static;transform:none;margin:18px 0"><div class="spinner"></div>${tr('calculating')}</div>`;
+  if (udpMode.phase === 'calculating') {
+    document.getElementById('panel').innerHTML = `<h2>${tr('udpTitle')}</h2><div class="udp-location">${udpMode.destination}</div><div class="overlay-msg" style="position:static;transform:none;margin:18px 0"><div class="spinner"></div>${tr('calculating')}</div>`;
     return;
   }
-  if (nearbyMode.phase === 'results') renderNearbyResults();
+  if (udpMode.phase === 'results') renderUdpResults();
 }
 
-async function startNearbyMode(requestedDestination = null) {
+async function startUdpMode(requestedDestination = null) {
   if (typeof requestedDestination !== 'string') requestedDestination = null;
-  nearbyMode = { active: true, phase: 'locating', location: null, destination: null, requestedDestination, routes: [] };
+  udpMode = { active: true, phase: 'choosing', destination: null, routes: [] };
   originAddr = null;
   clearCityGroup();
   compareGroup.selectAll('*').remove();
-  renderNearbyState();
-  try {
-    if (!navigator.geolocation) throw new Error('geolocation unavailable');
-    const position = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject, {
-      enableHighAccuracy: false, timeout: 10000, maximumAge: 300000
-    }));
-    nearbyMode.location = {
-      city: tr('browserLocation'), region: '', country: '', countryCode: '',
-      lat: Number(position.coords.latitude), lon: Number(position.coords.longitude)
-    };
-    nearbyMode.phase = 'choosing';
-    if (requestedDestination) {
-      await chooseNearbyDestination(requestedDestination);
-      return;
-    }
-  } catch (error) {
-    nearbyMode.phase = 'error';
-  }
-  renderNearbyState();
+  renderUdpState();
+  if (requestedDestination) await chooseUdpDestination(requestedDestination);
 }
 
-function startManualLocationMode() {
-  nearbyMode.active = true;
-  nearbyMode.phase = 'manual';
-  nearbyMode.location = null;
-  nearbyGroup.selectAll('*').remove();
-  clearCityGroup();
-  renderNearbyState();
-}
-
-function cancelNearbyMode() {
-  nearbyMode = { active: false, phase: 'idle', location: null, destination: null, routes: [] };
-  nearbyGroup.selectAll('*').remove();
+function cancelUdpMode() {
+  udpMode = { active: false, phase: 'idle', location: null, destination: null, routes: [] };
+  udpGroup.selectAll('*').remove();
   compareGroup.selectAll('*').remove();
   clearCityGroup();
   renderEmptyPanel();
 }
 
-function drawNearbyLocation() {
-  nearbyGroup.selectAll('*').remove();
-  if (!nearbyMode.location) return;
-  const point = projection([nearbyMode.location.lon, nearbyMode.location.lat]);
-  if (!point) return;
-  nearbyGroup.append('circle')
-    .attr('class', 'user-location-marker')
-    .attr('cx', point[0]).attr('cy', point[1])
-    .attr('r', 5 / currentZoomK)
-    .attr('data-base-r', 5)
-    .append('title').text(`${tr('detected')}: ${nearbyMode.location.city}`);
-}
-
 function handleProxySelection(addr) {
-  if (nearbyMode.active && nearbyMode.location) chooseNearbyDestination(addr);
-  else startNearbyMode(addr);
+  if (udpMode.active) chooseUdpDestination(addr);
+  else startUdpMode(addr);
 }
 
 async function resolveServerAddress(address) {
@@ -1231,72 +1083,82 @@ async function resolveServerAddress(address) {
   return `${answer.data}:${port}`;
 }
 
-async function chooseNearbyDestination(destination) {
+async function chooseUdpDestination(destination) {
+  udpMode = { ...udpMode, routes: [], collectorFailed: false, helperError: null };
   clearCityGroup();
+  const run = udpMode;
   const requestedDestination = destination;
-  nearbyMode.destination = requestedDestination;
-  nearbyMode.phase = 'calculating';
-  renderNearbyState();
+  udpMode.destination = requestedDestination;
+  udpMode.phase = 'calculating';
+  renderUdpState();
 
   try {
-    nearbyMode.destination = await resolveServerAddress(requestedDestination);
-    if (liveData.proxies?.[nearbyMode.destination] || Number(nearbyMode.destination.slice(nearbyMode.destination.lastIndexOf(':') + 1)) === 30000)
+    const resolved = await resolveServerAddress(requestedDestination);
+    if (udpMode !== run) return;
+    udpMode.destination = resolved;
+    if (liveData.proxies?.[udpMode.destination])
       throw new Error('destination is a qwfwd proxy');
-    nearbyMode.connectAddress = requestedDestination;
+    udpMode.connectAddress = requestedDestination;
   } catch (error) {
-    nearbyMode.destination = requestedDestination;
-    nearbyMode.connectAddress = requestedDestination;
-    nearbyMode.routes = [];
-    nearbyMode.phase = 'results';
-    renderNearbyState();
+    if (udpMode !== run) return;
+    udpMode.destination = requestedDestination;
+    udpMode.connectAddress = requestedDestination;
+    udpMode.routes = [];
+    udpMode.phase = 'results';
+    renderUdpState();
     return;
   }
 
-  const candidates = nearbyEntryCandidates(nearbyMode.location, nearbyMode.destination);
-
+  const health = await extensionRequest('health', undefined, 3000);
+  if (udpMode !== run) return;
+  if (!health.ok) { run.helperError = health.error; run.phase = 'results'; renderUdpState(); return; }
+  const candidates = udpEntryCandidates();
+  const measuredRtts = new Map();
+  const targets = [...candidates.map(c => c.addr), run.destination];
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(6, targets.length) }, async () => {
+    while (cursor < targets.length && udpMode === run) {
+      const addr = targets[cursor++];
+      const rtt = await measureViaLocalApp(addr);
+      if (Number.isFinite(rtt) && rtt > 0) measuredRtts.set(addr, rtt);
+    }
+  }));
+  if (udpMode !== run) return;
+  const direct = measuredRtts.get(run.destination);
+  const routes = Number.isFinite(direct) ? [{
+    entry: run.destination, candidate: { info: { city: 'Direct UDP', country_code: '' } },
+    path: [run.destination], path_geo: [], hops: 0, total_ping_ms: 0,
+    playerLegMs: direct, playerLegMeasured: true, playerLegSource: 'app', totalMeasuredLegsMs: direct
+  }] : [];
+  const measured = candidates.filter(c => measuredRtts.has(c.addr));
   try {
-    const measuredRtts = new Map(); // addr -> { rtt, source: 'cached' | 'app' | 'stun' }
-    await Promise.all(candidates.slice(0, 12).map(async candidate => {
-      const viaCache = await fetchCachedLegRtt(candidate.addr);
-      if (Number.isFinite(viaCache)) {
-        measuredRtts.set(candidate.addr, { rtt: viaCache, source: 'cached' });
-        return;
+    // Bound URL size and honor the collector's entry limit.
+    for (let i = 0; i < measured.length; i += 16) {
+      const batch = measured.slice(i, i + 16);
+      const response = await fetch(`${COLLECTOR_BASE}/routes-to?to=${encodeURIComponent(run.destination)}&entries=${encodeURIComponent(batch.map(c => c.addr).join(','))}`, { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+      if (!response.ok) throw new Error('collector unavailable');
+      const data = await response.json();
+      for (const route of data.routes || []) {
+        const candidate = batch.find(c => c.addr === route.entry);
+        if (!route.known || !candidate || !Number.isFinite(route.total_ping_ms) || route.total_ping_ms < 0) continue;
+        const playerLegMs = measuredRtts.get(route.entry);
+        routes.push({ ...route, candidate, playerLegMs, playerLegMeasured: true, playerLegSource: 'app', totalMeasuredLegsMs: playerLegMs + route.total_ping_ms,
+          path_geo: (route.path || []).map((addr, j) => confirmedGeo(addr, route.path_geo?.[j])) });
       }
-      const viaApp = await measureViaLocalApp(candidate.addr);
-      if (Number.isFinite(viaApp)) {
-        measuredRtts.set(candidate.addr, { rtt: viaApp, source: 'app' });
-        return;
-      }
-      const viaStun = await measureProxyRttViaStun(candidate.addr);
-      if (Number.isFinite(viaStun)) {
-        measuredRtts.set(candidate.addr, { rtt: viaStun, source: 'stun' });
-      }
-    }));
-    const entries = candidates.map(candidate => candidate.addr);
-    const response = await fetch(`${COLLECTOR_BASE}/routes-to?to=${encodeURIComponent(destination)}&entries=${encodeURIComponent(entries.join(','))}`, { cache: 'no-store' });
-    if (!response.ok) throw new Error(`collector returned ${response.status}`);
-    const data = await response.json();
-    const candidateByAddr = new Map(candidates.map(candidate => [candidate.addr, candidate]));
-    nearbyMode.routes = (data.routes || []).filter(route => route.known).map(route => {
-      const candidate = candidateByAddr.get(route.entry);
-      const measured = measuredRtts.get(route.entry);
-      const playerLegSource = measured ? measured.source : 'estimate';
-      const playerLegMeasured = playerLegSource !== 'estimate';
-      const playerLegMs = measured ? measured.rtt : estimatePlayerLegMs(candidate.distanceKm);
-      route.path_geo = (route.path || []).map((pathAddr, i) => confirmedGeo(pathAddr, route.path_geo?.[i]));
-      return { ...route, candidate, playerLegMs, playerLegMeasured, playerLegSource, estimatedTotalMs: playerLegMs + route.total_ping_ms };
-    }).sort((a, b) => a.estimatedTotalMs - b.estimatedTotalMs).slice(0, 3);
-  } catch (error) {
-    nearbyMode.routes = [];
-  }
-  nearbyMode.phase = 'results';
-  renderNearbyState();
+    }
+  } catch { run.collectorFailed = true; }
+  if (udpMode !== run) return;
+  run.routes = routes.sort((a, b) => a.totalMeasuredLegsMs - b.totalMeasuredLegsMs).slice(0, 3);
+  udpMode.phase = 'results';
+  renderUdpState();
 }
 
-function renderNearbyResults() {
-  const routes = nearbyMode.routes;
-  const destinationGeo = liveData.nodes[nearbyMode.destination];
-  let html = `<h2>${tr('recommendations')}</h2><div class="nearby-card"><div class="nearby-title">${tr('basedOn', nearbyMode.location.city)}</div><p>${nearbyMode.location.city} → ${destinationGeo ? countryFlag(destinationGeo.country_code) + ' ' + destinationGeo.city : nearbyMode.destination}</p><p>${tr('locationDisclaimer')}</p></div>`;
+function renderUdpResults() {
+  const routes = udpMode.routes;
+  const destinationGeo = liveData.nodes[udpMode.destination];
+  let html = `<h2>${tr('recommendations')}</h2><div class="udp-card"><div class="udp-title">${tr('measured')}</div><p>${destinationGeo ? countryFlag(destinationGeo.country_code) + ' ' + destinationGeo.city : udpMode.destination}</p><p>${tr('locationDisclaimer')}</p></div>`;
+  if (udpMode.helperError) html += `<p class="empty-hint">${tr('helperMissing')}</p>`;
+  if (udpMode.collectorFailed) html += '<p class="empty-hint">Mesh API unavailable — results incomplete.</p>';
   if (!routes.length) {
     html += `<p class="empty-hint">${tr('noRecommendations')}</p>`;
   } else {
@@ -1304,33 +1166,29 @@ function renderNearbyResults() {
     routes.forEach((route, index) => {
       const entryGeo = route.candidate.info;
       const chain = route.path.slice(0, -1).join('@');
-      const connectAddress = nearbyMode.connectAddress || nearbyMode.destination;
-      const command = chain ? `cl_proxyaddr ${chain}; connect ${connectAddress}` : `connect ${connectAddress}`;
+      const connectAddress = udpMode.connectAddress || udpMode.destination;
+      const command = chain ? `cl_proxyaddr ${chain}; connect ${connectAddress}` : `cl_proxyaddr ""; connect ${connectAddress}`;
       const hopLine = route.path.map((pathAddr, i) => {
         const geo = route.path_geo?.[i];
         const place = geo ? `${countryFlag(geo.country_code)} ${geo.city}` : pathAddr;
         return `<span class="hop-entry" title="${pathAddr}">${place}</span>`;
       }).join('<span class="hop-arrow" aria-hidden="true">&rarr;</span>');
-      const legSourceLabel = route.playerLegSource === 'cached' ? tr('cachedMeasured')
-        : route.playerLegSource === 'app' ? tr('appMeasured')
-        : route.playerLegSource === 'stun' ? tr('stunMeasured')
-        : tr('approximate');
-      html += `<div class="route-row nearby-route"><div class="row-main"><span class="target">${index + 1}. ${countryFlag(entryGeo.country_code)} ${entryGeo.city}</span><span class="ping ${pingClass(route.estimatedTotalMs)}">${route.playerLegMeasured ? '' : '~'}${route.estimatedTotalMs.toFixed(0)}ms</span></div><div class="nearby-breakdown"><span>${tr('playerEntry')}: <b>${route.playerLegMeasured ? '' : '~'}${route.playerLegMs.toFixed(0)}ms</b> <span class="estimate-tag">${legSourceLabel}</span></span><br><span>${tr('meshLeg')}: <b>${route.total_ping_ms.toFixed(0)}ms</b> ${tr('measured')}</span><br><span>${route.hops} ${tr('hops')} · ${Math.round(route.candidate.distanceKm)} km</span></div><div class="hop-chain">${hopLine}</div><button class="btn copy-nearby" data-cmd="${command.replace(/"/g, '&quot;')}">${tr('copyRoute')}</button></div>`;
+      const legSourceLabel = tr('appMeasured');
+      html += `<div class="route-row udp-route"><div class="row-main"><span class="target">${index + 1}. ${countryFlag(entryGeo.country_code)} ${entryGeo.city}</span><span class="ping ${pingClass(route.totalMeasuredLegsMs)}">${route.totalMeasuredLegsMs.toFixed(0)}ms</span></div><div class="udp-breakdown"><span>${tr('playerEntry')}: <b>${route.playerLegMs.toFixed(0)}ms</b> <span class="measurement-tag">${legSourceLabel}</span></span><br><span>${tr('meshLeg')}: <b>${route.total_ping_ms.toFixed(0)}ms</b> ${tr('measured')}</span><br><span>${route.hops} ${tr('hops')} · UDP</span></div><div class="hop-chain">${hopLine}</div><button class="btn copy-udp" data-cmd="${command.replace(/"/g, '&quot;')}">${tr('copyRoute')}</button></div>`;
     });
     html += `</div>`;
   }
-  html += `<button class="btn" id="change-nearby-destination">${tr('changeDestination')}</button><button class="btn" id="cancel-nearby">${tr('cancelNearby')}</button>`;
+  html += `<button class="btn" id="change-udp-destination">${tr('changeDestination')}</button><button class="btn" id="cancel-udp">${tr('cancelUdp')}</button>`;
   document.getElementById('panel').innerHTML = html;
-  document.querySelectorAll('.copy-nearby').forEach(button => button.addEventListener('click', async () => {
+  document.querySelectorAll('.copy-udp').forEach(button => button.addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(button.dataset.cmd); button.textContent = tr('copied'); }
     catch (error) { button.textContent = tr('copyError'); }
   }));
-  document.getElementById('change-nearby-destination')?.addEventListener('click', () => {
-    nearbyMode.phase = 'choosing'; nearbyMode.destination = null; nearbyMode.routes = [];
-    compareGroup.selectAll('*').remove(); renderNearbyState();
+  document.getElementById('change-udp-destination')?.addEventListener('click', () => {
+    udpMode.phase = 'choosing'; udpMode.destination = null; udpMode.routes = [];
+    compareGroup.selectAll('*').remove(); renderUdpState();
   });
-  document.getElementById('cancel-nearby')?.addEventListener('click', cancelNearbyMode);
-  drawNearbyLocation();
+  document.getElementById('cancel-udp')?.addEventListener('click', cancelUdpMode);
   if (routes.length) drawSingleRoute(routes[0]);
 }
 
@@ -1429,22 +1287,7 @@ function selectNode(addr) {
 svg.on('click.cluster-dismiss', () => {
   if (!activeCityGroup) return;
   clearCityGroup();
-  if (nearbyMode.active) renderNearbyState(); else renderEmptyPanel();
-});
-
-svg.on('click.manual-location', function (event) {
-  if (nearbyMode.phase !== 'manual' || event.defaultPrevented) return;
-  const screenPoint = d3.pointer(event, this);
-  const mapPoint = d3.zoomTransform(this).invert(screenPoint);
-  const coordinates = projection.invert(mapPoint);
-  if (!coordinates) return;
-  nearbyMode.location = {
-    city: tr('manualLocation'), region: '', country: '', countryCode: '',
-    lon: coordinates[0], lat: coordinates[1]
-  };
-  nearbyMode.phase = 'choosing';
-  renderNearbyState();
-  if (nearbyMode.requestedDestination) chooseNearbyDestination(nearbyMode.requestedDestination);
+  if (udpMode.active) renderUdpState(); else renderEmptyPanel();
 });
 
 // The actual point of the tool: for the selected proxy, which OTHER
