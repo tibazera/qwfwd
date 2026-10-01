@@ -20,7 +20,7 @@ const extract = (start, end) => html.slice(html.indexOf(start), html.indexOf(end
 async function scenario(samples, apiFails = false, helperMissing = false, meshPing = 20) {
   const calls = [];
   const context = vm.createContext({
-    document:{getElementById(){return null;}}, setTimeout, clearTimeout, navigator: {}, language: 'pt',
+    document:{getElementById(){return null;}}, setTimeout, clearTimeout, playerLocationAttempt:null, navigator: {}, language: 'pt',
     liveData: { proxies: { '1.1.1.1:1': {city:'A'}, '2.2.2.2:2': {city:'B'} } },
     extensionRequest: async () => helperMissing ? ({error:'helper_unavailable'}) : ({ok:true}), udpMode: { active:true }, clearCityGroup(){}, renderUdpState(){},
     resolveServerAddress: async () => '3.3.3.3:3',
@@ -41,7 +41,7 @@ async function scenario(samples, apiFails = false, helperMissing = false, meshPi
 }
 (async()=>{
   let success, failure, watchdog;
-  const locationContext = vm.createContext({document:{getElementById(){return null;}},setTimeout(fn){watchdog=fn;return 1;},clearTimeout(){},navigator:{geolocation:{getCurrentPosition(ok,fail){success=ok;failure=fail;}}},udpMode:{phase:'results'},renderUdpResults(){}});
+  const locationContext = vm.createContext({drawPlayerPosition(){},playerLocationAttempt:null,document:{getElementById(){return null;}},setTimeout(fn){watchdog=fn;return 1;},clearTimeout(){},navigator:{geolocation:{getCurrentPosition(ok,fail){success=ok;failure=fail;}}},udpMode:{phase:'results'},renderUdpResults(){}});
   vm.runInContext(extract('function locateUdpPlayer(', 'async function chooseUdpDestination('),locationContext);
   vm.runInContext('locateUdpPlayer()',locationContext);
   failure({code:1}); assert.equal(locationContext.udpMode.locationError,1);
@@ -49,6 +49,7 @@ async function scenario(samples, apiFails = false, helperMissing = false, meshPi
   success({coords:{latitude:-23.3,longitude:-51.1}}); assert.equal(locationContext.udpMode.location.lat,-23.3); assert.equal(locationContext.udpMode.locationPending,false);
 
   vm.runInContext('locateUdpPlayer()',locationContext);
+  locationContext.udpMode = {phase:'results',location:locationContext.udpMode.location};
   watchdog(); assert.equal(locationContext.udpMode.locationPending,false); assert.equal(locationContext.udpMode.locationError,3);
   success({coords:{latitude:1,longitude:1}}); assert.equal(locationContext.udpMode.location.lat,-23.3);
 
