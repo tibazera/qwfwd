@@ -1042,16 +1042,31 @@ async function resolveServerAddress(address) {
   return `${answer.data}:${port}`;
 }
 
+function locateUdpPlayer(run = udpMode) {
+  run.locationPending = true;
+  run.locationError = null;
+  const update = () => { if (udpMode === run && run.phase === 'results') renderUdpResults(); };
+  const fail = error => {
+    if (udpMode !== run) return;
+    run.locationPending = false;
+    run.locationError = error?.code || 2;
+    update();
+  };
+  if (!navigator.geolocation) { fail(); return; }
+  navigator.geolocation?.getCurrentPosition(position => {
+    if (udpMode !== run) return;
+    run.locationPending = false;
+    run.location = { lat: position.coords.latitude, lon: position.coords.longitude };
+    update();
+  }, fail, { enableHighAccuracy: true, timeout: 15000, maximumAge: 300000 });
+  update();
+}
+
 async function chooseUdpDestination(destination) {
   udpMode = { ...udpMode, routes: [], collectorFailed: false, helperError: null, progress: '', scanTotal: 0, scanDone: 0 };
   clearCityGroup();
   const run = udpMode;
-  // Location only draws the player-to-entry leg; UDP still decides ranking.
-  navigator.geolocation?.getCurrentPosition(position => {
-    if (udpMode !== run) return;
-    run.location = { lat: position.coords.latitude, lon: position.coords.longitude };
-    if (run.phase === 'results') renderUdpResults();
-  }, () => {}, { enableHighAccuracy: false, timeout: 5000, maximumAge: 300000 });
+  locateUdpPlayer(run);
   const requestedDestination = destination;
   udpMode.destination = requestedDestination;
   udpMode.phase = 'calculating';
@@ -1134,6 +1149,14 @@ function renderUdpResults() {
   const routes = udpMode.routes;
   const destinationGeo = liveData.nodes[udpMode.destination];
   let html = `<h2>${tr('recommendations')}</h2><div class="udp-card"><div class="udp-title">${routes.length ? tr('measured') : tr('udpTitle')}</div><p>${destinationGeo ? countryFlag(destinationGeo.country_code) + ' ' + destinationGeo.city : udpMode.destination}</p><p>${tr('locationDisclaimer')}</p></div>`;
+  if (!udpMode.location) {
+    const reason = udpMode.locationPending
+      ? (language === 'pt' ? 'Localizando seu ponto no mapa…' : 'Locating your position on the map…')
+      : udpMode.locationError === 1
+        ? (language === 'pt' ? 'Localização bloqueada. Permita Localização nas configurações deste site no Chrome.' : 'Location blocked. Allow Location in Chrome settings for this site.')
+        : (language === 'pt' ? 'O navegador não conseguiu localizar você. Confira a localização do sistema e tente novamente.' : 'The browser could not locate you. Check your system location settings and retry.');
+    html += `<p class="empty-hint">${reason} ${language === 'pt' ? 'O ping UDP funciona sem esse ponto; apenas o traço de você até o primeiro proxy fica indisponível.' : 'UDP ping works without this marker; only the line from you to the first proxy is unavailable.'}</p><button class="btn" id="locate-udp-player" ${udpMode.locationPending ? 'disabled' : ''}>${language === 'pt' ? 'Localizar meu ponto no mapa' : 'Locate my position on the map'}</button>`;
+  }
   if (udpMode.helperError) {
     const labels = {
       extension_unavailable: language === 'pt' ? 'A extensão não respondeu. Ative QW Mesh UDP Ping no Chrome e recarregue esta página.' : 'The extension did not respond. Enable QW Mesh UDP Ping in Chrome and reload this page.',
@@ -1171,6 +1194,7 @@ function renderUdpResults() {
     try { await navigator.clipboard.writeText(button.dataset.cmd); button.textContent = tr('copied'); }
     catch (error) { button.textContent = tr('copyError'); }
   }));
+  document.getElementById('locate-udp-player')?.addEventListener('click', () => locateUdpPlayer());
   document.getElementById('change-udp-destination')?.addEventListener('click', () => {
     udpMode.phase = 'choosing'; udpMode.destination = null; udpMode.routes = [];
     compareGroup.selectAll('*').remove(); renderUdpState();
