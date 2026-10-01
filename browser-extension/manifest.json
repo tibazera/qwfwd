@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "QW Mesh UDP Ping",
+  "version": "0.1.0",
+  "description": "Real QuakeWorld UDP measurements for QW Mesh.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxXfWYWSOXlGFawuvAcIMCUKVB/DUDSEo1Fy8NA4zujrloZBuOQTT9Vl/2vDmYKo5rGxdY376O4EshaN4GEGs1g1bTPxQUDt0yBkLYWOORjxmAF432Nciojqd6YQKd0X8jWi8zAeRQRt1MCcm2zlY1ZAOEwmU8WQEb7gNpkUY8kdZF7KCXJj5meXHtk9Tqe4W5Mwu7xDPo6n2T/Y8pOe/kek/vl5+nf4CG4OCgNndNpsNzeuIFPvnEqMDL8vrBzTItv/xxWq4GSezWJPxKgjNi5DHHeXhjGy/QBpTDShAulpryHfgpcU89HEtR1guu0DNPvHGjfpFywpAvtZKOCW2PwIDAQAB",
+  "permissions": [
+    "nativeMessaging"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://tibazera.github.io/qwfwd/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start"
+    }
+  ]
+}
