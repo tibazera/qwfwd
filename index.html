@@ -767,6 +767,7 @@ let destAddr = null;
 let activeCityGroup = null;
 let cityGroups = new Map();
 let currentZoomK = 1;
+let playerLocationAttempt = null;
 let udpMode = { active: false, phase: 'idle', location: null, destination: null, routes: [] };
 
 document.querySelectorAll('.lang-switch button').forEach(button => {
@@ -1051,15 +1052,26 @@ async function resolveServerAddress(address) {
   return `${answer.data}:${port}`;
 }
 
+function drawPlayerPosition() {
+  if (!udpMode.location) return;
+  compareGroup.selectAll('.player-position').remove();
+  const p = projection([udpMode.location.lon, udpMode.location.lat]);
+  compareGroup.append('circle').attr('class', 'player-position').attr('cx', p[0]).attr('cy', p[1]).attr('r', 5).attr('fill', cssVar('--good'));
+}
+
 function locateUdpPlayer(run = udpMode) {
   run.locationPending = true;
   run.locationError = null;
   const attempt = {};
   run.locationAttempt = attempt;
+  playerLocationAttempt = attempt;
   const update = () => {
-    if (udpMode !== run) return;
+    run = udpMode;
     const button = document.getElementById('request-player-location');
-    if (button) button.disabled = Boolean(run.locationPending);
+    if (button) {
+      button.disabled = false;
+      button.textContent = run.locationPending ? (language === 'pt' ? 'Tentar localização novamente' : 'Retry location') : (language === 'pt' ? 'Permitir localização' : 'Allow location');
+    }
     const status = document.getElementById('player-location-status');
     if (status) status.textContent = run.locationPending
       ? (language === 'pt' ? 'Aguardando localização…' : 'Waiting for location…')
@@ -1070,17 +1082,31 @@ function locateUdpPlayer(run = udpMode) {
     if (run.phase === 'results') renderUdpResults();
   };
   const finish = (position, error) => {
-    if (udpMode !== run || run.locationAttempt !== attempt) return;
+    if (playerLocationAttempt !== attempt) return;
+    run = udpMode;
     clearTimeout(timer);
+    playerLocationAttempt = null;
     run.locationAttempt = null;
     run.locationPending = false;
     run.locationError = position ? null : error?.code || 2;
-    if (position) run.location = { lat: position.coords.latitude, lon: position.coords.longitude };
+    if (position) {
+      run.location = { lat: position.coords.latitude, lon: position.coords.longitude };
+      drawPlayerPosition();
+    }
     update();
   };
   // Browser permission prompts may outlive the geolocation API's own timeout.
   const timer = setTimeout(() => finish(null, {code: 3}), 16000);
+  update();
   if (!navigator.geolocation) { finish(null); return; }
+  navigator.permissions?.query({name: 'geolocation'}).then(permission => {
+    if (playerLocationAttempt !== attempt) return;
+    if (permission.state === 'denied') { finish(null, {code: 1}); return; }
+    const status = document.getElementById('player-location-status');
+    if (status) status.textContent = permission.state === 'granted'
+      ? (language === 'pt' ? 'O Chrome já permite localização. Aguardando a posição do sistema…' : 'Chrome already allows location. Waiting for the system position…')
+      : (language === 'pt' ? 'Aceite o pedido de localização do Chrome. Confira o ícone de localização na barra de endereço.' : 'Accept Chrome’s location request. Check the location icon in the address bar.');
+  }).catch(() => {});
   try {
     navigator.geolocation?.getCurrentPosition(position => finish(position), error => finish(null, error),
       { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 });
@@ -1099,6 +1125,7 @@ function markUdpPlayerOnMap(run = udpMode) {
     const coordinates = projection.invert(point);
     if (!coordinates || !coordinates.every(Number.isFinite) || Math.abs(coordinates[1]) > 90) return;
     run.locationAttempt = null;
+    playerLocationAttempt = null;
     run.locationPending = false;
     run.locationError = null;
     run.location = { lon: coordinates[0], lat: coordinates[1] };
