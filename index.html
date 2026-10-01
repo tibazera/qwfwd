@@ -400,6 +400,7 @@ aside h2 {
   width: 100%;
   transition: border-color 0.15s;
 }
+header .btn { width: auto; flex-shrink: 0; }
 .btn:hover { border-color: var(--accent); }
 .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
@@ -453,6 +454,7 @@ footer {
   </div>
   <a href="https://github.com/tibazera/qwfwd/releases/tag/qw-mesh-browser-v0.1.0" target="_blank" rel="noopener" style="color:var(--accent);font-size:12px">Download / Setup</a>
   <button type="button" class="btn" id="request-player-location">Permitir localização</button>
+  <button type="button" class="btn" id="mark-player-location">Marcar posição no mapa</button>
   <span id="player-location-status" role="status" style="font-size:11px"></span>
   <div class="lang-switch" aria-label="Language">
     <button type="button" data-lang="pt" class="active">PT</button>
@@ -606,6 +608,7 @@ function setLanguage(lang) {
   document.getElementById('stat-updated-label').textContent = tr('updated');
   document.getElementById('legend-test').textContent = tr('testServer');
   document.getElementById('request-player-location').textContent = language === 'pt' ? 'Permitir localização' : 'Allow location';
+  document.getElementById('mark-player-location').textContent = language === 'pt' ? 'Marcar posição no mapa' : 'Mark position on map';
   document.getElementById('hint').textContent = tr('zoom');
   document.getElementById('footer-note').textContent = liveData.lastCollectedAt ? tr('footerLive') : tr('footerLoading');
   document.getElementById('compatibility-note').textContent = tr('compatibilityNote');
@@ -778,6 +781,7 @@ document.getElementById('panel').addEventListener('click', event => {
 });
 setLanguage(language);
 document.getElementById('request-player-location').addEventListener('click', () => locateUdpPlayer());
+document.getElementById('mark-player-location').addEventListener('click', () => markUdpPlayerOnMap());
 
 // --- live data fetch from the collector - this is what makes the map a
 // live view instead of a fixed snapshot: every load (and every periodic
@@ -1085,10 +1089,10 @@ function locateUdpPlayer(run = udpMode) {
 }
 
 function markUdpPlayerOnMap(run = udpMode) {
-  const button = document.getElementById('mark-udp-player');
+  const button = document.getElementById('mark-udp-player') || document.getElementById('mark-player-location');
   if (button) button.textContent = language === 'pt' ? 'Clique na sua posição no mapa' : 'Click your position on the map';
   svg.on('click.player-location', event => {
-    if (udpMode !== run || run.phase !== 'results') { svg.on('click.player-location', null); return; }
+    if (udpMode !== run) { svg.on('click.player-location', null); return; }
     event.preventDefault();
     event.stopImmediatePropagation();
     const point = d3.zoomTransform(svg.node()).invert(d3.pointer(event, svg.node()));
@@ -1099,7 +1103,15 @@ function markUdpPlayerOnMap(run = udpMode) {
     run.locationError = null;
     run.location = { lon: coordinates[0], lat: coordinates[1] };
     svg.on('click.player-location', null);
-    renderUdpResults();
+    document.getElementById('request-player-location').disabled = false;
+    document.getElementById('player-location-status').textContent = language === 'pt' ? 'Posição marcada por você' : 'Position marked by you';
+    document.getElementById('mark-player-location').textContent = language === 'pt' ? 'Marcar posição no mapa' : 'Mark position on map';
+    if (run.phase === 'results') renderUdpResults();
+    else {
+      compareGroup.selectAll('.player-position').remove();
+      const p = projection([run.location.lon, run.location.lat]);
+      compareGroup.append('circle').attr('class', 'player-position').attr('cx', p[0]).attr('cy', p[1]).attr('r', 5).attr('fill', cssVar('--good'));
+    }
   }, true);
 }
 
