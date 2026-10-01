@@ -217,6 +217,7 @@ svg#map:active { cursor: grabbing; }
 .udp-breakdown { margin-top: 5px; font: 9.5px/1.55 var(--mono); color: var(--text-dim); }
 .udp-breakdown b { color: var(--text); font-weight: 600; }
 .udp-route .hop-chain { margin-top: 6px; }
+.route-command { margin: 8px 0; font-size: 10px; overflow-wrap: anywhere; }
 .measurement-tag { color: var(--warn); font-size: 9px; font-weight: 600; }
 .user-location-marker { fill: var(--warn); stroke: var(--surface); stroke-width: 1.5; }
 .route-path {
@@ -513,7 +514,7 @@ const I18N = {
     detected: 'Sua conexão',     chooseDestination: 'Escolha um servidor no mapa ou digite o endereço do servidor Quake.',
     serverPlaceholder: 'IP:porta do servidor (ex.: 203.0.113.10:27500)', findServerRoute: 'Calcular rota para o servidor', invalidServer: 'Digite um servidor Quake válido no formato IP:porta. Escolha um servidor de jogo, não um proxy.',
     chooseDestinationProxy: 'Este ponto é um proxy qwfwd e será usado apenas como hop.', cancelUdp: 'Sair da medição', calculating: 'Medindo o primeiro hop e calculando rotas…',
-    recommendations: 'Rotas recomendadas',   measured: 'medido',
+    recommendations: 'Rotas recomendadas',   measured: 'medido', player: 'Você', proxy: 'Proxy', server: 'Servidor', command: 'Comando',
     playerEntry: 'você → entrada', meshLeg: 'malha → servidor', approxTotal: 'total aproximado', noRecommendations: 'Sem medição UDP utilizável. Confira a extensão e o helper e tente novamente.',
      appMeasured: 'UDP local',  copyRoute: 'copiar rota', copyHops: 'copiar somente hops', changeDestination: 'Escolher outro servidor', locationDisclaimer: 'Requer extensão QW Mesh e helper instalados. Total via proxy = soma dos trechos medidos, não um teste fim a fim.'
   },
@@ -546,7 +547,7 @@ const I18N = {
     detected: 'Your connection',     chooseDestination: 'Choose a server on the map or enter its Quake server address.',
     serverPlaceholder: 'server IP:port (e.g. 203.0.113.10:27500)', findServerRoute: 'Calculate route to server', invalidServer: 'Enter a valid Quake server as IP:port. Choose a game server, not a proxy.',
     chooseDestinationProxy: 'This point is a qwfwd proxy and is used only as a hop.', cancelUdp: 'Exit measurement', calculating: 'Measuring the first hop and calculating routes…',
-    recommendations: 'Recommended routes',   measured: 'measured',
+    recommendations: 'Recommended routes',   measured: 'measured', player: 'You', proxy: 'Proxy', server: 'Server', command: 'Command',
     playerEntry: 'you → entry', meshLeg: 'mesh → server', approxTotal: 'approximate total', noRecommendations: 'No usable UDP measurement. Check the extension and helper and retry.',
      appMeasured: 'local UDP',  copyRoute: 'copy route', copyHops: 'copy hops only', changeDestination: 'Choose another server', locationDisclaimer: 'Requires the QW Mesh extension and helper installed. Proxy total sums measured legs; it is not an end-to-end test.'
   }
@@ -1007,7 +1008,7 @@ function renderUdpState() {
 
 async function startUdpMode(requestedDestination = null) {
   if (typeof requestedDestination !== 'string') requestedDestination = null;
-  udpMode = { active: true, phase: 'choosing', destination: null, routes: [] };
+  udpMode = { active: true, phase: 'choosing', location: null, destination: null, routes: [] };
   originAddr = null;
   clearCityGroup();
   compareGroup.selectAll('*').remove();
@@ -1045,6 +1046,12 @@ async function chooseUdpDestination(destination) {
   udpMode = { ...udpMode, routes: [], collectorFailed: false, helperError: null };
   clearCityGroup();
   const run = udpMode;
+  // Location only draws the player-to-entry leg; UDP still decides ranking.
+  navigator.geolocation?.getCurrentPosition(position => {
+    if (udpMode !== run) return;
+    run.location = { lat: position.coords.latitude, lon: position.coords.longitude };
+    if (run.phase === 'results') renderUdpResults();
+  }, () => {}, { enableHighAccuracy: false, timeout: 5000, maximumAge: 300000 });
   const requestedDestination = destination;
   udpMode.destination = requestedDestination;
   udpMode.phase = 'calculating';
@@ -1085,7 +1092,7 @@ async function chooseUdpDestination(destination) {
   const direct = measuredRtts.get(run.destination);
   const routes = Number.isFinite(direct) ? [{
     entry: run.destination, candidate: { info: { city: 'Direct UDP', country_code: '' } },
-    path: [run.destination], path_geo: [], hops: 0, total_ping_ms: 0,
+    path: [run.destination], path_geo: liveData.nodes?.[run.destination] ? [liveData.nodes[run.destination]] : [], hops: 0, total_ping_ms: 0,
     playerLegMs: direct, playerLegMeasured: true, playerLegSource: 'app', totalMeasuredLegsMs: direct
   }] : [];
   const measured = candidates.filter(c => measuredRtts.has(c.addr));
@@ -1101,12 +1108,13 @@ async function chooseUdpDestination(destination) {
         if (!route.known || !candidate || !Number.isFinite(route.total_ping_ms) || route.total_ping_ms < 0) continue;
         const playerLegMs = measuredRtts.get(route.entry);
         routes.push({ ...route, candidate, playerLegMs, playerLegMeasured: true, playerLegSource: 'app', totalMeasuredLegsMs: playerLegMs + route.total_ping_ms,
+          qualityRankMs: playerLegMs + (Number.isFinite(route.quality_cost_ms) ? route.quality_cost_ms : route.total_ping_ms),
           path_geo: (route.path || []).map((addr, j) => confirmedGeo(addr, route.path_geo?.[j])) });
       }
     }
   } catch { run.collectorFailed = true; }
   if (udpMode !== run) return;
-  run.routes = routes.sort((a, b) => a.totalMeasuredLegsMs - b.totalMeasuredLegsMs).slice(0, 3);
+  run.routes = routes.sort((a, b) => (a.qualityRankMs ?? a.totalMeasuredLegsMs) - (b.qualityRankMs ?? b.totalMeasuredLegsMs)).slice(0, 3);
   udpMode.phase = 'results';
   renderUdpState();
 }
@@ -1134,13 +1142,15 @@ function renderUdpResults() {
       const chain = route.path.slice(0, -1).join('@');
       const connectAddress = udpMode.connectAddress || udpMode.destination;
       const command = chain ? `cl_proxyaddr ${chain}; connect ${connectAddress}` : `cl_proxyaddr ""; connect ${connectAddress}`;
-      const hopLine = route.path.map((pathAddr, i) => {
+      const proxyHops = route.path.map((pathAddr, i) => {
         const geo = route.path_geo?.[i];
         const place = geo ? `${countryFlag(geo.country_code)} ${geo.city}` : pathAddr;
-        return `<span class="hop-entry" title="${pathAddr}">${place}</span>`;
+        const role = i === route.path.length - 1 ? tr('server') : `${tr('proxy')} ${i + 1}`;
+        return `<span class="hop-entry"><b>${role}:</b> ${place} <code>${escapeHtml(pathAddr)}</code></span>`;
       }).join('<span class="hop-arrow" aria-hidden="true">&rarr;</span>');
+      const hopLine = `<span class="hop-entry">${tr('player')}</span><span class="hop-arrow" aria-hidden="true">&rarr;</span>${proxyHops}`;
       const legSourceLabel = tr('appMeasured');
-      html += `<div class="route-row udp-route"><div class="row-main"><span class="target">${index + 1}. ${countryFlag(entryGeo.country_code)} ${entryGeo.city}</span><span class="ping ${pingClass(route.totalMeasuredLegsMs)}">${route.totalMeasuredLegsMs.toFixed(0)}ms</span></div><div class="udp-breakdown"><span>${tr('playerEntry')}: <b>${route.playerLegMs.toFixed(0)}ms</b> <span class="measurement-tag">${legSourceLabel}</span></span><br><span>${tr('meshLeg')}: <b>${route.total_ping_ms.toFixed(0)}ms</b> ${tr('measured')}</span><br><span>${route.hops} ${tr('hops')} · UDP</span></div><div class="hop-chain">${hopLine}</div><button class="btn copy-udp" data-cmd="${command.replace(/"/g, '&quot;')}">${tr('copyRoute')}</button></div>`;
+      html += `<div class="route-row udp-route"><div class="row-main"><span class="target">${index + 1}. ${countryFlag(entryGeo.country_code)} ${entryGeo.city}</span><span class="ping ${pingClass(route.totalMeasuredLegsMs)}">${route.totalMeasuredLegsMs.toFixed(0)}ms</span></div><div class="udp-breakdown"><span>${tr('playerEntry')}: <b>${route.playerLegMs.toFixed(0)}ms</b> <span class="measurement-tag">${legSourceLabel}</span></span><br><span>${tr('meshLeg')}: <b>${route.total_ping_ms.toFixed(0)}ms</b> ${tr('measured')}</span><br><span>${route.hops} ${tr('hops')} · UDP</span></div><div class="hop-chain">${hopLine}</div><div class="route-command"><b>${tr('command')}:</b> <code>${escapeHtml(command)}</code></div><button class="btn copy-udp" data-cmd="${command.replace(/"/g, '&quot;')}">${tr('copyRoute')}</button></div>`;
     });
     html += `</div>`;
   }
@@ -1409,7 +1419,8 @@ function drawTopRoutes(fromAddr, routes) {
 function drawSingleRoute(route) {
   compareGroup.selectAll('.route-highlight').remove();
   if (!route.path_geo) return;
-  const pts = route.path_geo.map(g => g && projection([g.lon, g.lat])).filter(Boolean);
+  const player = udpMode.location && projection([udpMode.location.lon, udpMode.location.lat]);
+  const pts = [player, ...route.path_geo.map(g => g && projection([g.lon, g.lat]))].filter(Boolean);
   if (pts.length < 2) return;
   const lineGen = d3.line().x(d => d[0]).y(d => d[1]);
   compareGroup.append('path')
