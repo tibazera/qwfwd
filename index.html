@@ -515,7 +515,7 @@ const I18N = {
     serverPlaceholder: 'IP:porta do servidor (ex.: 203.0.113.10:27500)', findServerRoute: 'Calcular rota para o servidor', invalidServer: 'Digite um servidor Quake válido no formato IP:porta. Escolha um servidor de jogo, não um proxy.',
     chooseDestinationProxy: 'Este ponto é um proxy qwfwd e será usado apenas como hop.', cancelUdp: 'Sair da medição', calculating: 'Medindo o primeiro hop e calculando rotas…',
     recommendations: 'Rotas recomendadas',   measured: 'medido', player: 'Você', proxy: 'Proxy', server: 'Servidor', command: 'Comando',
-    playerEntry: 'você → entrada', meshLeg: 'malha → servidor', approxTotal: 'total aproximado', noRecommendations: 'Sem medição UDP utilizável. Confira a extensão e o helper e tente novamente.',
+    playerEntry: 'você → entrada', meshLeg: 'malha → servidor', approxTotal: 'Total estimado desde você', noRecommendations: 'Sem medição UDP utilizável. Confira a extensão e o helper e tente novamente.',
      appMeasured: 'UDP local',  copyRoute: 'copiar rota', copyHops: 'copiar somente hops', changeDestination: 'Escolher outro servidor', locationDisclaimer: 'Requer extensão QW Mesh e helper instalados. Total via proxy = soma dos trechos medidos, não um teste fim a fim.'
   },
   en: {
@@ -548,7 +548,7 @@ const I18N = {
     serverPlaceholder: 'server IP:port (e.g. 203.0.113.10:27500)', findServerRoute: 'Calculate route to server', invalidServer: 'Enter a valid Quake server as IP:port. Choose a game server, not a proxy.',
     chooseDestinationProxy: 'This point is a qwfwd proxy and is used only as a hop.', cancelUdp: 'Exit measurement', calculating: 'Measuring the first hop and calculating routes…',
     recommendations: 'Recommended routes',   measured: 'measured', player: 'You', proxy: 'Proxy', server: 'Server', command: 'Command',
-    playerEntry: 'you → entry', meshLeg: 'mesh → server', approxTotal: 'approximate total', noRecommendations: 'No usable UDP measurement. Check the extension and helper and retry.',
+    playerEntry: 'you → entry', meshLeg: 'mesh → server', approxTotal: 'Estimated total from you', noRecommendations: 'No usable UDP measurement. Check the extension and helper and retry.',
      appMeasured: 'local UDP',  copyRoute: 'copy route', copyHops: 'copy hops only', changeDestination: 'Choose another server', locationDisclaimer: 'Requires the QW Mesh extension and helper installed. Proxy total sums measured legs; it is not an end-to-end test.'
   }
 };
@@ -1150,7 +1150,7 @@ function renderUdpResults() {
       }).join('<span class="hop-arrow" aria-hidden="true">&rarr;</span>');
       const hopLine = `<span class="hop-entry">${tr('player')}</span><span class="hop-arrow" aria-hidden="true">&rarr;</span>${proxyHops}`;
       const legSourceLabel = tr('appMeasured');
-      html += `<div class="route-row udp-route"><div class="row-main"><span class="target">${index + 1}. ${countryFlag(entryGeo.country_code)} ${entryGeo.city}</span><span class="ping ${pingClass(route.totalMeasuredLegsMs)}">${route.totalMeasuredLegsMs.toFixed(0)}ms</span></div><div class="udp-breakdown"><span>${tr('playerEntry')}: <b>${route.playerLegMs.toFixed(0)}ms</b> <span class="measurement-tag">${legSourceLabel}</span></span><br><span>${tr('meshLeg')}: <b>${route.total_ping_ms.toFixed(0)}ms</b> ${tr('measured')}</span><br><span>${route.hops} ${tr('hops')} · UDP</span></div><div class="hop-chain">${hopLine}</div><div class="route-command"><b>${tr('command')}:</b> <code>${escapeHtml(command)}</code></div><button class="btn copy-udp" data-cmd="${command.replace(/"/g, '&quot;')}">${tr('copyRoute')}</button></div>`;
+      html += `<div class="route-row udp-route"><div class="row-main"><span class="target">${index + 1}. ${countryFlag(entryGeo.country_code)} ${entryGeo.city}</span><span class="ping ${pingClass(route.totalMeasuredLegsMs)}" title="${tr('approxTotal')}">${route.hops ? '≈ ' : ''}${route.totalMeasuredLegsMs.toFixed(0)}ms</span></div><div class="udp-breakdown"><strong>${tr('approxTotal')}: ${route.playerLegMs.toFixed(0)}ms + ${route.total_ping_ms.toFixed(0)}ms = ${route.totalMeasuredLegsMs.toFixed(0)}ms</strong><br><span>${tr('playerEntry')}: <b>${route.playerLegMs.toFixed(0)}ms</b> <span class="measurement-tag">${legSourceLabel}</span></span><br><span>${tr('meshLeg')}: <b>${route.total_ping_ms.toFixed(0)}ms</b> ${tr('measured')}</span><br><span>${route.hops} ${tr('hops')} · UDP</span></div><div class="hop-chain">${hopLine}</div><div class="route-command"><b>${tr('command')}:</b> <code>${escapeHtml(command)}</code></div><button class="btn copy-udp" data-cmd="${command.replace(/"/g, '&quot;')}">${tr('copyRoute')}</button></div>`;
     });
     html += `</div>`;
   }
