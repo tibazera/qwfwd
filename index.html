@@ -794,8 +794,8 @@ async function fetchLiveSnapshot() {
   const nodes = {};
   const proxies = {};
   const edges = [];
-  const proxyAddrs = new Set(Object.keys(snap.edges));
-  const isProxyAddr = addr => proxyAddrs.has(addr) || PINNED_PROXIES.has(addr) || geo[addr]?.is_proxy === true || Number(addr.slice(addr.lastIndexOf(':') + 1)) === 30000;
+  const proxyAddrs = new Set(snap.proxies || Object.keys(snap.edges));
+  const isProxyAddr = addr => proxyAddrs.has(addr) || (!snap.proxies && (PINNED_PROXIES.has(addr) || geo[addr]?.is_proxy === true));
   const isQtvAddr = addr => /\bqtv\b/i.test(geo[addr]?.hostname || '');
   const isGameServer = addr => !isProxyAddr(addr) && !isQtvAddr(addr);
 
@@ -803,9 +803,8 @@ async function fetchLiveSnapshot() {
   // the map. The snapshot is intentionally compact and must not limit the
   // visible server list.
   for (const [addr, info] of Object.entries(geo)) {
-    if (!Number.isFinite(Number(info.lat)) || !Number.isFinite(Number(info.lon))) continue;
     if (isProxyAddr(addr)) proxies[addr] = { ...info, is_proxy: true };
-    else if (isGameServer(addr)) nodes[addr] = { ...info, is_proxy: false };
+    else if (info.lat != null && info.lon != null && Number.isFinite(Number(info.lat)) && Number.isFinite(Number(info.lon)) && isGameServer(addr)) nodes[addr] = { ...info, is_proxy: false };
   }
 
   for (const [fromAddr, edgeList] of Object.entries(snap.edges)) {
@@ -818,7 +817,7 @@ async function fetchLiveSnapshot() {
     for (const edge of edgeList) {
       if (!geo[edge.to]) continue;
       if (isProxyAddr(edge.to)) proxies[edge.to] = { ...geo[edge.to], is_proxy: true };
-      else if (isGameServer(edge.to)) nodes[edge.to] = { ...geo[edge.to], is_proxy: false };
+      else if (geo[edge.to].lat != null && geo[edge.to].lon != null && isGameServer(edge.to)) nodes[edge.to] = { ...geo[edge.to], is_proxy: false };
     }
     const valid = edgeList.filter(e => proxyAddrs.has(e.to) && geo[e.to]);
     valid.sort((a, b) => a.ping - b.ping);
@@ -831,10 +830,10 @@ async function fetchLiveSnapshot() {
   // Reference qwfwd nodes remain available to the route calculator but are
   // intentionally hidden from the user-facing server map.
   for (const addr of PINNED_PROXIES) {
-    if (!proxies[addr] && geo[addr]) proxies[addr] = { ...geo[addr], is_proxy: true };
+    if (!snap.proxies && !proxies[addr] && geo[addr]) proxies[addr] = { ...geo[addr], is_proxy: true };
   }
 
-  return { nodes, proxies, edges, proxyAddrs, lastCollectedAt: snap.last_collected_at, meshCapableCount: snap.mesh_capable_count };
+  return { nodes, proxies, edges, proxyAddrs, discovery: snap.discovery, lastCollectedAt: snap.last_collected_at, meshCapableCount: snap.mesh_capable_count };
 }
 
 function renderMap(data) {
@@ -1000,7 +999,7 @@ function renderUdpState() {
     return;
   }
   if (udpMode.phase === 'calculating') {
-    document.getElementById('panel').innerHTML = `<h2>${tr('udpTitle')}</h2><div class="udp-location">${escapeHtml(udpMode.destination)}</div><div class="overlay-msg" style="position:static;transform:none;margin:18px 0"><div class="spinner"></div>${escapeHtml(udpMode.progress || tr('calculating'))}</div>${udpMode.scanTotal ? `<progress aria-label="UDP" max="${udpMode.scanTotal}" value="${udpMode.scanDone || 0}" style="width:100%"></progress>` : ''}`;
+    document.getElementById('panel').innerHTML = `<h2>${tr('udpTitle')}</h2><div class="udp-location">${escapeHtml(udpMode.destination)}</div><div class="overlay-msg" style="position:static;transform:none;margin:18px 0"><div class="spinner"></div>${escapeHtml(udpMode.progress || tr('calculating'))}${udpMode.discoveryInfo ? `<p>${escapeHtml(udpMode.discoveryInfo)}</p>` : ''}</div>${udpMode.scanTotal ? `<progress aria-label="UDP" max="${udpMode.scanTotal}" value="${udpMode.scanDone || 0}" style="width:100%"></progress>` : ''}`;
     return;
   }
   if (udpMode.phase === 'results') renderUdpResults();
@@ -1081,6 +1080,8 @@ async function chooseUdpDestination(destination) {
   const measuredRtts = new Map();
   const targets = [...candidates.map(c => c.addr), run.destination];
   run.scanTotal = targets.length;
+  const discovery = liveData.discovery;
+  run.discoveryInfo = discovery ? (language === 'pt' ? `${discovery.probed}/${discovery.candidates} endereços verificados · ${discovery.confirmed} proxies confirmados${discovery.complete ? '' : ' · descoberta incompleta'}` : `${discovery.probed}/${discovery.candidates} addresses checked · ${discovery.confirmed} confirmed proxies${discovery.complete ? '' : ' · discovery incomplete'}`) : '';
   run.progress = language === 'pt' ? `Medindo UDP: 0/${targets.length} destinos` : `Measuring UDP: 0/${targets.length} targets`;
   renderUdpState();
   let cursor = 0;
@@ -1429,7 +1430,7 @@ function drawSingleRoute(route) {
   compareGroup.selectAll('.route-highlight').remove();
   if (!route.path_geo) return;
   const player = udpMode.location && projection([udpMode.location.lon, udpMode.location.lat]);
-  const pts = [player, ...route.path_geo.map(g => g && projection([g.lon, g.lat]))].filter(Boolean);
+  const pts = [player, ...route.path_geo.map(g => g && g.lat != null && g.lon != null && projection([g.lon, g.lat]))].filter(Boolean);
   if (pts.length < 2) return;
   const lineGen = d3.line().x(d => d[0]).y(d => d[1]);
   compareGroup.append('path')
@@ -1480,7 +1481,7 @@ function drawComparison(result) {
   }
 
   if (result.via_mesh.known && result.via_mesh.path_geo) {
-    const pts = result.via_mesh.path_geo.map(g => g && projection([g.lon, g.lat])).filter(Boolean);
+    const pts = result.via_mesh.path_geo.map(g => g && g.lat != null && g.lon != null && projection([g.lon, g.lat])).filter(Boolean);
     if (pts.length >= 2) {
       const lineGen = d3.line().x(d => d[0]).y(d => d[1]);
       compareGroup.append('path')
