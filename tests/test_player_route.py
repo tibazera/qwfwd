@@ -57,6 +57,37 @@ def test_dijkstra_with_extra_edges_uses_injected_edge_without_mutating_graph():
     )
 
 
+def test_game_port_cannot_relay_to_proxy_on_same_ip():
+    collector.graph = collector.GraphState()
+    source = ("10.0.0.1", 30000)
+    game = ("10.0.0.2", 27501)
+    proxy = ("10.0.0.2", 30501)
+    collector.graph.add_edge(source, collector.Edge(*game, ping=20.0))
+    collector.graph.geo[proxy] = collector.GeoInfo("PT", "Portugal", "Europe", "Lisbon", 38.7, -9.1, "proxy", True)
+    check("game_port_not_proxy_route", collector.dijkstra(source, proxy) is None)
+    check("game_port_not_proxy_route_with_player_edges",
+          collector.dijkstra_with_extra_edges(source, proxy) is None)
+
+
+def test_high_loss_edge_is_not_routable():
+    collector.graph = collector.GraphState()
+    source = ("10.0.0.1", 30000)
+    target = ("10.0.0.2", 30000)
+    collector.graph.add_edge(source, collector.Edge(*target, ping=10.0, loss_pct=88))
+    check("high_loss_not_routable", collector.dijkstra(source, target) is None)
+    check("high_loss_not_routable_with_player_edges",
+          collector.dijkstra_with_extra_edges(source, target) is None)
+
+
+def test_route_can_use_more_than_four_hops():
+    collector.graph = collector.GraphState()
+    nodes = [(f"10.9.0.{i}", 30000) for i in range(1, 8)]
+    for source, target in zip(nodes, nodes[1:]):
+        collector.graph.add_edge(source, collector.Edge(*target, ping=1.0, jitter=1, loss_pct=0))
+    result = collector.dijkstra(nodes[0], nodes[-1])
+    check("route_over_four_hops", result == (6.0, nodes), f"result={result}")
+
+
 def test_uuid_rate_limited_blocks_after_threshold():
     collector._uuid_rate_track.clear()
     uuid = "11111111-1111-4111-8111-111111111111"
@@ -79,6 +110,8 @@ def _start_test_server():
     b = ("10.0.1.2", 30000)
     collector.graph.geo[a] = collector.GeoInfo("PT", "Portugal", "Europe", "Lisbon", 38.7, -9.1, "test-a", True)
     collector.graph.geo[b] = collector.GeoInfo("BR", "Brazil", "South America", "Sao Paulo", -23.5, -46.6, "test-b", True)
+    collector.graph.geo[("10.0.2.1", 27501)] = collector.GeoInfo("PT", "Portugal", "Europe", "Lisbon", 38.7, -9.1, "game-a", False)
+    collector.graph.geo[("10.0.2.2", 27501)] = collector.GeoInfo("BR", "Brazil", "South America", "Sao Paulo", -23.5, -46.6, "game-b", False)
     collector.graph.add_edge(a, collector.Edge(to_ip=b[0], to_port=b[1], ping=200.0, source="meshstatus"))
 
     server = collector.ThreadingHTTPServer(("127.0.0.1", 0), collector.Handler)
@@ -96,7 +129,8 @@ def test_player_targets_returns_known_nodes():
             body = json.loads(resp.read())
         check("player_targets_status_shape", "targets" in body, f"body={body}")
         ips = {t["ip"] for t in body.get("targets", [])}
-        check("player_targets_includes_known_nodes", {"10.0.1.1", "10.0.1.2"} <= ips, f"ips={ips}")
+        check("player_targets_includes_game_servers", {"10.0.2.1", "10.0.2.2"} <= ips, f"ips={ips}")
+        check("player_targets_excludes_proxies", not {"10.0.1.1", "10.0.1.2"} & ips, f"ips={ips}")
     finally:
         server.shutdown()
 
@@ -162,6 +196,9 @@ def test_player_route_rejects_bad_payload():
 
 def main():
     test_dijkstra_with_extra_edges_uses_injected_edge_without_mutating_graph()
+    test_game_port_cannot_relay_to_proxy_on_same_ip()
+    test_high_loss_edge_is_not_routable()
+    test_route_can_use_more_than_four_hops()
     test_uuid_rate_limited_blocks_after_threshold()
     test_player_targets_returns_known_nodes()
     test_player_route_happy_path_and_isolation()

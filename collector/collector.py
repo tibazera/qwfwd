@@ -101,8 +101,8 @@ MAX_WORKERS = 64
 RECOLLECT_INTERVAL_SECONDS = 300
 MESH_MAX_PAGES = 10
 MESH_PAGE_DELAY_SECONDS = 1.05  # qwfwd permits one mesh reply/source/second
-ROUTE_MAX_HOPS = 4
 ROUTE_MAX_EDGE_AGE_SECONDS = 900
+ROUTE_MAX_LOSS_PCT = 25
 ROUTE_JITTER_WEIGHT = 0.50
 ROUTE_LOSS_WEIGHT_MS = 2.0
 ROUTE_RELAY_PENALTY_MS = 3.0
@@ -423,78 +423,27 @@ def recollect_loop() -> None:
 
 
 def dijkstra(start: tuple[str, int], end: tuple[str, int]) -> tuple[float, list[tuple[str, int]]] | None:
+    return dijkstra_with_extra_edges(start, end)
+
+
+def path_quality_cost(path: list[tuple[str, int]]) -> float:
+    """Return the same ping+jitter+loss+relay score used by Dijkstra."""
     with graph.lock:
-        # snapshot the adjacency under lock, then run Dijkstra lock-free
         adjacency = {k: list(v) for k, v in graph.edges.items()}
-
-    # Keep hop count in the state: the cheapest way to reach a node with
-    # four hops is not interchangeable with a slightly costlier one that
-    # still has room for another relay.  The returned number remains raw
-    # RTT sum for UI compatibility; the queue uses a quality-aware cost.
-    start_state = (start, 0)
-    dist: dict[tuple[tuple[str, int], int], float] = {start_state: 0.0}
-    raw_ping: dict[tuple[tuple[str, int], int], float] = {start_state: 0.0}
-    prev: dict[tuple[tuple[str, int], int], tuple[tuple[str, int], int]] = {}
-    visited: set[tuple[tuple[str, int], int]] = set()
-    pq: list[tuple[float, tuple[str, int], int]] = [(0.0, start, 0)]
-    end_state: tuple[tuple[str, int], int] | None = None
-
-    while pq:
-        d, node, hops = heapq.heappop(pq)
-        state = (node, hops)
-        if state in visited:
-            continue
-        visited.add(state)
-        if node == end:
-            end_state = state
-            break
-        # Different ports on the same physical host are not another WAN
-        # hop. Once a route reaches a qwfwd on the destination server's IP,
-        # terminate locally instead of leaving that city and coming back
-        # through an unrelated proxy (for example Miami -> Atlanta -> the
-        # game server on the original Miami host).
-        if node[0] == end[0]:
-            local_end_state = (end, hops + 1)
-            dist[local_end_state] = d
-            raw_ping[local_end_state] = raw_ping[state]
-            prev[local_end_state] = state
-            end_state = local_end_state
-            break
-        if hops >= ROUTE_MAX_HOPS:
-            continue
-        for edge in adjacency.get(node, []):
-            if edge.age_seconds > ROUTE_MAX_EDGE_AGE_SECONDS:
+    total = 0.0
+    end = path[-1]
+    for source, target in zip(path, path[1:]):
+        costs = []
+        for edge in adjacency.get(source, []):
+            if (edge.to_ip, edge.to_port) != target or edge.age_seconds > ROUTE_MAX_EDGE_AGE_SECONDS:
                 continue
-            neighbor = (edge.to_ip, edge.to_port)
-            next_state = (neighbor, hops + 1)
-            jitter = float(edge.jitter or 0)
-            loss = float(edge.loss_pct or 0)
-            edge_cost = (edge.ping + ROUTE_JITTER_WEIGHT * jitter
-                         + ROUTE_LOSS_WEIGHT_MS * loss)
-            if neighbor != end:
-                edge_cost += ROUTE_RELAY_PENALTY_MS
-            nd = d + edge_cost
-            if next_state not in dist or nd < dist[next_state]:
-                dist[next_state] = nd
-                raw_ping[next_state] = raw_ping[state] + edge.ping
-                prev[next_state] = state
-                heapq.heappush(pq, (nd, neighbor, hops + 1))
-
-    if end_state is None:
-        return None
-
-    path = [end_state[0]]
-    seen = {end_state}
-    state = end_state
-    while state != start_state:
-        nxt = prev.get(state)
-        if nxt is None or nxt in seen:
-            return None  # disconnected or cycle guard
-        seen.add(nxt)
-        path.append(nxt[0])
-        state = nxt
-    path.reverse()
-    return raw_ping[end_state], path
+            if edge.loss_pct is not None and edge.loss_pct > ROUTE_MAX_LOSS_PCT:
+                continue
+            cost = edge.ping + ROUTE_JITTER_WEIGHT * float(edge.jitter or 0) + ROUTE_LOSS_WEIGHT_MS * float(edge.loss_pct or 0)
+            costs.append(cost + (ROUTE_RELAY_PENALTY_MS if target != end else 0))
+        if costs:
+            total += min(costs)
+    return total
 
 
 def _route_from_samples(
@@ -575,41 +524,38 @@ def dijkstra_with_extra_edges(
     the shared mesh (see spec: isolation by design, no poisoning surface)."""
     with graph.lock:
         adjacency = {k: list(v) for k, v in graph.edges.items()}
+        end_geo = graph.geo.get(end)
+    proxy_nodes = set(adjacency)
+    local_game = end_geo is not None and not end_geo.is_proxy
     if extra_adjacency:
         for node, edges in extra_adjacency.items():
             adjacency.setdefault(node, []).extend(edges)
 
-    start_state = (start, 0)
-    dist: dict[tuple[tuple[str, int], int], float] = {start_state: 0.0}
-    raw_ping: dict[tuple[tuple[str, int], int], float] = {start_state: 0.0}
-    prev: dict[tuple[tuple[str, int], int], tuple[tuple[str, int], int]] = {}
-    visited: set[tuple[tuple[str, int], int]] = set()
-    pq: list[tuple[float, tuple[str, int], int]] = [(0.0, start, 0)]
-    end_state: tuple[tuple[str, int], int] | None = None
+    dist = {start: 0.0}
+    raw_ping = {start: 0.0}
+    prev: dict[tuple[str, int], tuple[str, int]] = {}
+    visited: set[tuple[str, int]] = set()
+    pq = [(0.0, start)]
+    end_node = None
 
     while pq:
-        d, node, hops = heapq.heappop(pq)
-        state = (node, hops)
-        if state in visited:
+        d, node = heapq.heappop(pq)
+        if node in visited:
             continue
-        visited.add(state)
+        visited.add(node)
         if node == end:
-            end_state = state
+            end_node = node
             break
-        if node[0] == end[0]:
-            local_end_state = (end, hops + 1)
-            dist[local_end_state] = d
-            raw_ping[local_end_state] = raw_ping[state]
-            prev[local_end_state] = state
-            end_state = local_end_state
+        if local_game and node in proxy_nodes and node[0] == end[0]:
+            dist[end] = d
+            raw_ping[end] = raw_ping[node]
+            prev[end] = node
+            end_node = end
             break
-        if hops >= ROUTE_MAX_HOPS:
-            continue
         for edge in adjacency.get(node, []):
-            if edge.age_seconds > ROUTE_MAX_EDGE_AGE_SECONDS:
+            if edge.age_seconds > ROUTE_MAX_EDGE_AGE_SECONDS or (edge.loss_pct is not None and edge.loss_pct > ROUTE_MAX_LOSS_PCT):
                 continue
             neighbor = (edge.to_ip, edge.to_port)
-            next_state = (neighbor, hops + 1)
             jitter = float(edge.jitter or 0)
             loss = float(edge.loss_pct or 0)
             edge_cost = (edge.ping + ROUTE_JITTER_WEIGHT * jitter
@@ -617,27 +563,26 @@ def dijkstra_with_extra_edges(
             if neighbor != end:
                 edge_cost += ROUTE_RELAY_PENALTY_MS
             nd = d + edge_cost
-            if next_state not in dist or nd < dist[next_state]:
-                dist[next_state] = nd
-                raw_ping[next_state] = raw_ping[state] + edge.ping
-                prev[next_state] = state
-                heapq.heappush(pq, (nd, neighbor, hops + 1))
+            if neighbor not in dist or nd < dist[neighbor]:
+                dist[neighbor] = nd
+                raw_ping[neighbor] = raw_ping[node] + edge.ping
+                prev[neighbor] = node
+                heapq.heappush(pq, (nd, neighbor))
 
-    if end_state is None:
+    if end_node is None:
         return None
 
-    path = [end_state[0]]
-    seen = {end_state}
-    state = end_state
-    while state != start_state:
-        nxt = prev.get(state)
-        if nxt is None or nxt in seen:
+    path = [end_node]
+    seen = {end_node}
+    node = end_node
+    while node != start:
+        node = prev.get(node)
+        if node is None or node in seen:
             return None
-        seen.add(nxt)
-        path.append(nxt[0])
-        state = nxt
+        seen.add(node)
+        path.append(node)
     path.reverse()
-    return raw_ping[end_state], path
+    return raw_ping[end_node], path
 
 
 def parse_addr_param(value: str) -> tuple[str, int] | None:
@@ -1042,6 +987,7 @@ class Handler(BaseHTTPRequestHandler):
                         "entry": entry_str,
                         "known": True,
                         "total_ping_ms": total_ping,
+                        "quality_cost_ms": path_quality_cost(path),
                         "hops": len(path) - 1,
                         "path": [f"{ip}:{port}" for ip, port in path],
                         "path_geo": path_geo,
