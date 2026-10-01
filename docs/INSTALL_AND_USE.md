@@ -90,7 +90,54 @@ Enable the extension, check that you loaded the correct folder, and reload the p
 
 ### No UDP reply
 
-Some endpoints are offline or block queries. Check that your firewall allows `QwMeshPing.exe` to send UDP, then try another destination. A timeout is not a ping estimate.
+Some endpoints are offline or block queries. Check that your firewall allows `QwMeshPing.exe` (Windows) or `QwMeshPing` (Linux) to send UDP, then try another destination. A timeout is not a ping estimate.
+
+### Your position does not appear on the map
+
+Location is optional and only draws your position and the line to the first proxy. It does not calculate ping, select proxies, or identify your city through UDP.
+
+1. Reload the site with **Ctrl+F5** and click **Allow location** in the header.
+2. If Chrome asks for permission, allow it. If permission is already granted, Chrome will not display another prompt.
+3. If the site reports **Access blocked**, open the icon beside the address bar, select **Site settings**, and set **Location** to **Allow**.
+4. If the site reports **Chrome already allows location. Waiting for the system position**, Chrome has permission but the operating system has not supplied coordinates. Check the system location settings below.
+
+The site stops waiting after approximately 16 seconds. Permission alone does not guarantee that the computer can determine its position. UDP measurements and route selection continue to work even if location is unavailable.
+
+#### Windows: check location settings and the service
+
+Open the location settings from PowerShell:
+
+```powershell
+Start-Process "ms-settings:privacy-location"
+```
+
+Enable **Location services** and, if shown, **Let desktop apps access your location**. The wording may differ between Windows versions.
+
+If location remains unavailable, check the Geolocation Service:
+
+```powershell
+Get-Service lfsvc -ErrorAction SilentlyContinue |
+    Select-Object Name, Status, StartType
+```
+
+If `StartType` is **Disabled**, open a separate **PowerShell as administrator** and run:
+
+```powershell
+Set-Service -Name lfsvc -StartupType Manual
+Start-Service -Name lfsvc
+Get-Service lfsvc | Select-Object Name, Status, StartType
+Start-Process "ms-settings:privacy-location"
+```
+
+Immediately after these commands, the expected result is **Running / Manual**. Enable location in the settings page too: starting the service does not grant location consent. Restart Chrome and retry **Allow location** on the site.
+
+Administrator access is only needed for changing the service, not for installing the QW Mesh helper. If the service is missing, a command fails, or location is managed by your organization, report the exact output; do not delete registry entries or override organization policies.
+
+Command reference: [Microsoft Start-Service documentation](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/start-service).
+
+#### Linux
+
+Allow location for the site in Chrome or Chromium and check the desktop environment's location/privacy settings, if available. Linux desktops differ in the location providers they expose. A working UDP helper does not guarantee that browser geolocation is available.
 
 ### Send useful test feedback
 
@@ -98,7 +145,7 @@ Include the destination address, the copied command, the site's estimated total,
 
 ## Update or uninstall
 
-To update, extract the new ZIP, run its installer, and replace the unpacked extension in Chrome with the new folder. Reload the QW Mesh page.
+To update, extract the new ZIP or Linux tar.gz, run its installer, and replace the unpacked extension in Chrome with the new folder. Reload the QW Mesh page.
 
 To uninstall, remove the extension in `chrome://extensions`, then run this in PowerShell from the extracted package folder:
 
@@ -109,7 +156,3 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\native-ping-host\Uninstall
 The helper runs when Chrome requests a measurement; no separate PlayerPingApp window needs to be started.
 
 On Linux, uninstall the helper with `sh native-ping-host/UninstallLinux.sh`. If you installed for a custom browser user data directory, pass the same directory to the uninstall script.
-
-### Your city does not appear
-
-Your city is not required for ping measurement. Optional browser geolocation only draws your position on the map; it does not search a city catalogue or calculate ping. Allow location access in the site permissions and check your operating system location settings if you want that marker. If location is unavailable, UDP measurements and route selection still work.
