@@ -2,7 +2,7 @@
 
 ## QW Mesh browser test
 
-[Download the Windows x64 extension + UDP helper](https://github.com/tibazera/qwfwd/releases/tag/qw-mesh-browser-v0.1.0) · [Installation and usage guide (English)](docs/INSTALL_AND_USE.md) · [Open QW Mesh](https://tibazera.github.io/qwfwd/)
+[Download the Windows / Linux x64 extension + UDP helper](https://github.com/tibazera/qwfwd/releases/tag/qw-mesh-browser-v0.1.0) · [Installation and usage guide (English)](docs/INSTALL_AND_USE.md) · [Open QW Mesh](https://tibazera.github.io/qwfwd/)
 
 
 ## Supported architectures

@@ -1,20 +1,44 @@
 # QW Mesh — installation and usage
 
-This test package supports **Google Chrome on Windows x64**. It includes the Chrome extension and a small native helper that measures real QuakeWorld UDP round trips from your computer. You do not need PlayerPingApp, the .NET SDK, or a separate .NET runtime.
+These test packages support **Google Chrome on Windows x64 and Linux x64**. It includes the Chrome extension and a small native helper that measures real QuakeWorld UDP round trips from your computer. You do not need PlayerPingApp, the .NET SDK, or a separate .NET runtime.
 
 ## 1. Download
 
 Download **[qw-mesh-windows-test.zip](https://github.com/tibazera/qwfwd/releases/download/qw-mesh-browser-v0.1.0/qw-mesh-windows-test.zip)** from the [GitHub release](https://github.com/tibazera/qwfwd/releases/tag/qw-mesh-browser-v0.1.0).
 
-Right-click the ZIP and select **Extract All**. Extract everything into a permanent folder, for example `Documents\QW Mesh`. Do not run the installer directly inside the ZIP.
+For Linux, download **[qw-mesh-linux-x64-test.tar.gz](https://github.com/tibazera/qwfwd/releases/download/qw-mesh-browser-v0.1.0/qw-mesh-linux-x64-test.tar.gz)** from the same release.
+
+On Windows, right-click the ZIP and select **Extract All**. Extract everything into a permanent folder, for example `Documents\QW Mesh`. Do not run the installer directly inside the ZIP.
 
 ## 2. Install the UDP helper
+
+### Windows x64
 
 1. Open the extracted `native-ping-host` folder.
 2. Double-click **InstallPrepared.cmd**.
 3. Wait for **SUCCESS: helper installed and registered**. Press any key to close the window.
 
 Installation is for the current Windows user and normally needs no administrator access. It copies the helper to `%LOCALAPPDATA%\QwMeshPing` and registers it with Chrome. Install it using the same Windows account you use for Chrome.
+
+### Linux x64
+
+Use a regular desktop installation of Google Chrome or Chromium on a glibc-based Linux distribution, such as Debian or Ubuntu. The installer requires Python 3. ARM, Alpine/musl, and Snap/Flatpak browser installations are not supported by this package.
+
+```bash
+tar -xzf qw-mesh-linux-x64-test.tar.gz
+cd qw-mesh-linux-x64-test
+sh native-ping-host/InstallLinux.sh
+```
+
+Run this as your normal desktop user, **without sudo**. Wait for **SUCCESS**. The helper is installed in `~/.local/lib/qw-mesh-ping`. The installer registers it for Chrome and Chromium and checks that the executable starts successfully. No .NET installation is needed.
+
+For a browser launched with a custom user data directory, pass that directory:
+
+```bash
+sh native-ping-host/InstallLinux.sh /absolute/path/to/browser-user-data
+```
+
+Then follow the extension and usage steps below in your Linux browser. Keep the extracted extension folder on disk.
 
 ## 3. Load the Chrome extension
 
@@ -58,6 +82,8 @@ The local helper currently takes one RTT sample per endpoint; it does not measur
 3. Fully exit Chrome, reopen it, and reload the QW Mesh page. If Chrome remains running in the background, exit that instance too.
 4. If it still fails, report the exact error, your Chrome version, and the installer output in a [GitHub issue](https://github.com/tibazera/qwfwd/issues).
 
+On Linux, rerun `sh native-ping-host/InstallLinux.sh` without sudo, check for SUCCESS, and restart your browser. Use a regular desktop browser installation. If you use a custom user data directory, pass it to the installer.
+
 ### “The extension did not respond”
 
 Enable the extension, check that you loaded the correct folder, and reload the page. The extension is restricted to `https://tibazera.github.io/qwfwd/`.
@@ -81,3 +107,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\native-ping-host\Uninstall
 ```
 
 The helper runs when Chrome requests a measurement; no separate PlayerPingApp window needs to be started.
+
+On Linux, uninstall the helper with `sh native-ping-host/UninstallLinux.sh`. If you installed for a custom browser user data directory, pass the same directory to the uninstall script.
+
+### Your city does not appear
+
+Your city is not required for ping measurement. Optional browser geolocation only draws your position on the map; it does not search a city catalogue or calculate ping. Allow location access in the site permissions and check your operating system location settings if you want that marker. If location is unavailable, UDP measurements and route selection still work.

@@ -1,6 +1,6 @@
 # QW Mesh UDP Ping
 
-See the [English installation and usage guide](https://github.com/tibazera/qwfwd/blob/feat/mesh-routing/docs/INSTALL_AND_USE.md) for the Windows x64 package, setup, route testing, troubleshooting, and uninstall instructions.
+See the [English installation and usage guide](https://github.com/tibazera/qwfwd/blob/feat/mesh-routing/docs/INSTALL_AND_USE.md) for the Windows and Linux x64 packages, setup, route testing, troubleshooting, and uninstall instructions.
 
 The extension uses Chrome Native Messaging and is restricted to the QW Mesh website. The packaged native helper replaces the need to run PlayerPingApp for website measurements.
 
@@ -13,3 +13,5 @@ dotnet publish native-ping-host/NativePingHost.csproj -c Release -r win-x64 --se
 ```
 
 Then run `native-ping-host/InstallPrepared.cmd` and load this extension folder in Chrome.
+
+For a Linux x64 source build, use `-r linux-x64` and run `sh native-ping-host/InstallLinux.sh`. See the guide for supported browser installations.
