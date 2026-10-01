@@ -16,7 +16,7 @@ Fluxo:
      também traz coordenadas geográficas reais (geo.coordinates) por
      servidor, o que resolve por completo a necessidade de geolocalização
      própria de IP para o mapa mundial.
-  2. Para cada um que responde na porta 30000 (convenção, não garantia):
+  2. Verifica todos os endereços descobertos, independentemente da porta:
      tenta meshstatus primeiro (dados ricos: ping+jitter+loss, várias
      arestas de uma vez). Se não responder, tenta pingstatus (legado,
      só ping direto, sem jitter/loss).
@@ -33,6 +33,7 @@ processos leves de recoleta acontecem em background.
 from __future__ import annotations
 
 import heapq
+import ipaddress
 import json
 import os
 import secrets
@@ -125,8 +126,8 @@ class GeoInfo:
     country: str
     region: str
     city: str
-    lat: float
-    lon: float
+    lat: float | None
+    lon: float | None
     hostname: str
     is_proxy: bool
     server_version: str = ""
@@ -153,6 +154,8 @@ class GraphState:
     # node A about node B says nothing about B's measurement of A.
     edges: dict[tuple[str, int], list[Edge]] = field(default_factory=dict)
     mesh_capable: set[tuple[str, int]] = field(default_factory=set)
+    discovery: dict = field(default_factory=dict)
+    confirmed_proxies: set[tuple[str, int]] = field(default_factory=set)
     geo: dict[tuple[str, int], GeoInfo] = field(default_factory=dict)
     last_collected_at: float = 0.0
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -245,7 +248,7 @@ def fetch_qw_data_servers() -> list[tuple[tuple[str, int], GeoInfo]]:
         geo = entry.get("geo") or {}
         coords = geo.get("coordinates")
         if not coords or len(coords) != 2:
-            continue  # no point keeping a geo entry with no coordinates
+            coords = (None, None)
 
         version = str(entry.get("version", ""))
         settings = entry.get("settings", {}) or {}
@@ -260,8 +263,8 @@ def fetch_qw_data_servers() -> list[tuple[tuple[str, int], GeoInfo]]:
                     country=str(geo.get("country", "")),
                     region=str(geo.get("region", "")),
                     city=str(geo.get("city", "")),
-                    lat=float(coords[0]),
-                    lon=float(coords[1]),
+                    lat=float(coords[0]) if coords[0] is not None else None,
+                    lon=float(coords[1]) if coords[1] is not None else None,
                     hostname=hostname,
                     is_proxy=is_proxy,
                     server_version=version,
@@ -300,14 +303,22 @@ def probe_meshstatus(sock: socket.socket, addr: tuple[str, int]) -> list[protoco
     return all_blocks
 
 
-def probe_pingstatus(sock: socket.socket, addr: tuple[str, int]) -> list[tuple[str, int, int]]:
+def probe_pingstatus(sock: socket.socket, addr: tuple[str, int]) -> list[tuple[str, int, int]] | None:
     reply = protocol.udp_request(sock, addr, protocol.build_pingstatus_query())
-    if reply is None:
-        return []
+    if reply is None or not reply.startswith(protocol.OOB + b"n") or (len(reply) - 5) % 8:
+        return None
     return protocol.parse_pingstatus_reply(reply)
 
 
-def probe_one(addr: tuple[str, int], target_graph: GraphState) -> None:
+def public_endpoint(addr: tuple[str, int]) -> bool:
+    try:
+        return ipaddress.IPv4Address(addr[0]).is_global and 0 < addr[1] <= 65535
+    except (ValueError, TypeError):
+        return False
+
+
+def probe_one(addr: tuple[str, int], target_graph: GraphState) -> set[tuple[str, int]]:
+    discovered = set()
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(PROBE_TIMEOUT)
     try:
@@ -315,15 +326,25 @@ def probe_one(addr: tuple[str, int], target_graph: GraphState) -> None:
         # the cache reported by its peers; it complements pingstatus and is
         # not a replacement for the node's own outbound edges.
         entries = probe_pingstatus(sock, addr)
-        for ip, port, ping in entries:
+        if entries is not None:
+            with target_graph.lock:
+                target_graph.edges.setdefault(addr, [])
+                target_graph.confirmed_proxies.add(addr)
+        for ip, port, ping in entries or []:
+            discovered.add((ip, port))
             target_graph.add_edge(addr, Edge(ip, port, float(ping), source="pingstatus"))
 
         mesh_blocks = probe_meshstatus(sock, addr)
         if mesh_blocks is not None:
             with target_graph.lock:
                 target_graph.mesh_capable.add(addr)
+                target_graph.edges.setdefault(addr, [])
+                target_graph.confirmed_proxies.add(addr)
             for block in mesh_blocks:
                 peer_addr = (block.peer_ip, block.peer_port)
+                if not public_endpoint(peer_addr):
+                    continue
+                discovered.add(peer_addr)
                 for hop in block.hops:
                     target_graph.add_edge(
                         peer_addr,
@@ -333,6 +354,7 @@ def probe_one(addr: tuple[str, int], target_graph: GraphState) -> None:
                     )
     finally:
         sock.close()
+    return {peer for peer in discovered if public_endpoint(peer)}
 
 
 def collect_once() -> None:
@@ -381,7 +403,7 @@ def collect_once() -> None:
     # proxies momentarily missed by a master query, or proxies that opted
     # out of master registration but still answer the protocol directly)
     qw_data_proxy_addrs = {addr for addr, info in qw_data_entries if info.is_proxy}
-    candidates = {(ip, port) for ip, port in servers if port == PROXY_PORT_HINT}
+    candidates = set(servers) | {addr for addr, _ in qw_data_entries}
     candidates |= qw_data_proxy_addrs
     candidates |= set(PINNED_PROXIES)
 
@@ -392,10 +414,34 @@ def collect_once() -> None:
         f"{len(candidates)} total proxy candidates to probe"
     )
 
+    candidates = {addr for addr in candidates if public_endpoint(addr)}
+    visited = set()
+    confirmed = set()
+    # ponytail: cap external discovery at 4096 endpoints per cycle; expose truncation.
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-        futures = [pool.submit(probe_one, addr, next_graph) for addr in candidates]
-        for f in as_completed(futures):
-            f.result()  # propagate exceptions instead of swallowing them silently
+        pending = candidates.copy()
+        while pending and len(visited) < 4096:
+            batch = sorted(pending)[:4096 - len(visited)]
+            visited.update(batch)
+            futures = {pool.submit(probe_one, addr, next_graph): addr for addr in batch}
+            for future in as_completed(futures):
+                candidates.update(future.result())
+                addr = futures[future]
+                if addr in next_graph.confirmed_proxies:
+                    # Reported peer origins alone do not confirm a responding proxy.
+                    # probe_one creates empty origins only for valid protocol replies.
+                    confirmed.add(addr)
+            pending = candidates - visited
+    # Only independently confirmed proxies can be relay origins.
+    next_graph.edges = {addr: edges for addr, edges in next_graph.edges.items() if addr in confirmed}
+    for addr in confirmed:
+        if addr not in next_graph.geo:
+            next_graph.geo[addr] = GeoInfo('', '', '', '', None, None, f'{addr[0]}:{addr[1]}', True)
+    next_graph.discovery = {
+        'candidates': len(candidates), 'probed': len(visited),
+        'confirmed': len(confirmed), 'not_confirmed': len(visited - confirmed),
+        'remaining': len(candidates - visited), 'complete': candidates <= visited,
+    }
 
     next_graph.last_collected_at = time.time()
     # Publish one complete collection atomically.  Readers never see a
@@ -404,6 +450,8 @@ def collect_once() -> None:
     with graph.lock, next_graph.lock:
         graph.edges = next_graph.edges
         graph.mesh_capable = next_graph.mesh_capable
+        graph.confirmed_proxies = next_graph.confirmed_proxies
+        graph.discovery = next_graph.discovery
         graph.geo = next_graph.geo
         graph.last_collected_at = next_graph.last_collected_at
     total_edges = sum(len(v) for v in next_graph.edges.values())
@@ -1145,6 +1193,8 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "last_collected_at": graph.last_collected_at,
                     "mesh_capable_count": len(graph.mesh_capable),
+                    "discovery": graph.discovery,
+                    "proxies": [f"{ip}:{port}" for ip, port in sorted(graph.confirmed_proxies)],
                     "edges": graph.snapshot(),
                 }
             )
