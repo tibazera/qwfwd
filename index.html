@@ -452,6 +452,8 @@ footer {
     <span><span id="stat-updated-label">atualizado</span> <b id="stat-age">&mdash;</b></span>
   </div>
   <a href="https://github.com/tibazera/qwfwd/releases/tag/qw-mesh-browser-v0.1.0" target="_blank" rel="noopener" style="color:var(--accent);font-size:12px">Download / Setup</a>
+  <button type="button" class="btn" id="request-player-location">Permitir localização</button>
+  <span id="player-location-status" role="status" style="font-size:11px"></span>
   <div class="lang-switch" aria-label="Language">
     <button type="button" data-lang="pt" class="active">PT</button>
     <button type="button" data-lang="en">EN</button>
@@ -603,6 +605,7 @@ function setLanguage(lang) {
   document.getElementById('stat-edges-label').textContent = tr('edges');
   document.getElementById('stat-updated-label').textContent = tr('updated');
   document.getElementById('legend-test').textContent = tr('testServer');
+  document.getElementById('request-player-location').textContent = language === 'pt' ? 'Permitir localização' : 'Allow location';
   document.getElementById('hint').textContent = tr('zoom');
   document.getElementById('footer-note').textContent = liveData.lastCollectedAt ? tr('footerLive') : tr('footerLoading');
   document.getElementById('compatibility-note').textContent = tr('compatibilityNote');
@@ -774,6 +777,7 @@ document.getElementById('panel').addEventListener('click', event => {
   if (button && event.currentTarget.contains(button)) startUdpMode(button.dataset.udpDestination);
 });
 setLanguage(language);
+document.getElementById('request-player-location').addEventListener('click', () => locateUdpPlayer());
 
 // --- live data fetch from the collector - this is what makes the map a
 // live view instead of a fixed snapshot: every load (and every periodic
@@ -1008,7 +1012,7 @@ function renderUdpState() {
 
 async function startUdpMode(requestedDestination = null) {
   if (typeof requestedDestination !== 'string') requestedDestination = null;
-  udpMode = { active: true, phase: 'choosing', location: null, destination: null, routes: [] };
+  udpMode = { active: true, phase: 'choosing', location: udpMode.location, destination: null, routes: [] };
   originAddr = null;
   clearCityGroup();
   compareGroup.selectAll('*').remove();
@@ -1017,6 +1021,7 @@ async function startUdpMode(requestedDestination = null) {
 }
 
 function cancelUdpMode() {
+  svg.on('click.player-location', null);
   udpMode = { active: false, phase: 'idle', location: null, destination: null, routes: [] };
   udpGroup.selectAll('*').remove();
   compareGroup.selectAll('*').remove();
@@ -1045,28 +1050,64 @@ async function resolveServerAddress(address) {
 function locateUdpPlayer(run = udpMode) {
   run.locationPending = true;
   run.locationError = null;
-  const update = () => { if (udpMode === run && run.phase === 'results') renderUdpResults(); };
-  const fail = error => {
+  const attempt = {};
+  run.locationAttempt = attempt;
+  const update = () => {
     if (udpMode !== run) return;
+    const button = document.getElementById('request-player-location');
+    if (button) button.disabled = Boolean(run.locationPending);
+    const status = document.getElementById('player-location-status');
+    if (status) status.textContent = run.locationPending
+      ? (language === 'pt' ? 'Aguardando localização…' : 'Waiting for location…')
+      : run.location ? (language === 'pt' ? 'Localização obtida' : 'Location found')
+      : run.locationError === 1
+        ? (language === 'pt' ? 'Acesso bloqueado: ícone ao lado do endereço → Localização → Permitir.' : 'Access blocked: icon beside the address → Location → Allow.')
+        : (language === 'pt' ? 'Localização indisponível. Tente novamente ou marque no mapa.' : 'Location unavailable. Retry or mark your position on the map.');
+    if (run.phase === 'results') renderUdpResults();
+  };
+  const finish = (position, error) => {
+    if (udpMode !== run || run.locationAttempt !== attempt) return;
+    clearTimeout(timer);
+    run.locationAttempt = null;
     run.locationPending = false;
-    run.locationError = error?.code || 2;
+    run.locationError = position ? null : error?.code || 2;
+    if (position) run.location = { lat: position.coords.latitude, lon: position.coords.longitude };
     update();
   };
-  if (!navigator.geolocation) { fail(); return; }
-  navigator.geolocation?.getCurrentPosition(position => {
-    if (udpMode !== run) return;
-    run.locationPending = false;
-    run.location = { lat: position.coords.latitude, lon: position.coords.longitude };
-    update();
-  }, fail, { enableHighAccuracy: true, timeout: 15000, maximumAge: 300000 });
+  // Browser permission prompts may outlive the geolocation API's own timeout.
+  const timer = setTimeout(() => finish(null, {code: 3}), 16000);
+  if (!navigator.geolocation) { finish(null); return; }
+  try {
+    navigator.geolocation?.getCurrentPosition(position => finish(position), error => finish(null, error),
+      { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 });
+  } catch { finish(null); }
   update();
+}
+
+function markUdpPlayerOnMap(run = udpMode) {
+  const button = document.getElementById('mark-udp-player');
+  if (button) button.textContent = language === 'pt' ? 'Clique na sua posição no mapa' : 'Click your position on the map';
+  svg.on('click.player-location', event => {
+    if (udpMode !== run || run.phase !== 'results') { svg.on('click.player-location', null); return; }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const point = d3.zoomTransform(svg.node()).invert(d3.pointer(event, svg.node()));
+    const coordinates = projection.invert(point);
+    if (!coordinates || !coordinates.every(Number.isFinite) || Math.abs(coordinates[1]) > 90) return;
+    run.locationAttempt = null;
+    run.locationPending = false;
+    run.locationError = null;
+    run.location = { lon: coordinates[0], lat: coordinates[1] };
+    svg.on('click.player-location', null);
+    renderUdpResults();
+  }, true);
 }
 
 async function chooseUdpDestination(destination) {
   udpMode = { ...udpMode, routes: [], collectorFailed: false, helperError: null, progress: '', scanTotal: 0, scanDone: 0 };
   clearCityGroup();
   const run = udpMode;
-  locateUdpPlayer(run);
+  if (!run.location) locateUdpPlayer(run);
   const requestedDestination = destination;
   udpMode.destination = requestedDestination;
   udpMode.phase = 'calculating';
@@ -1155,7 +1196,7 @@ function renderUdpResults() {
       : udpMode.locationError === 1
         ? (language === 'pt' ? 'Localização bloqueada. Permita Localização nas configurações deste site no Chrome.' : 'Location blocked. Allow Location in Chrome settings for this site.')
         : (language === 'pt' ? 'O navegador não conseguiu localizar você. Confira a localização do sistema e tente novamente.' : 'The browser could not locate you. Check your system location settings and retry.');
-    html += `<p class="empty-hint">${reason} ${language === 'pt' ? 'O ping UDP funciona sem esse ponto; apenas o traço de você até o primeiro proxy fica indisponível.' : 'UDP ping works without this marker; only the line from you to the first proxy is unavailable.'}</p><button class="btn" id="locate-udp-player" ${udpMode.locationPending ? 'disabled' : ''}>${language === 'pt' ? 'Localizar meu ponto no mapa' : 'Locate my position on the map'}</button>`;
+    html += `<p class="empty-hint">${reason} ${language === 'pt' ? 'O ping UDP funciona sem esse ponto; apenas o traço de você até o primeiro proxy fica indisponível.' : 'UDP ping works without this marker; only the line from you to the first proxy is unavailable.'}</p><button class="btn" id="mark-udp-player">${language === 'pt' ? 'Marcar minha posição no mapa' : 'Mark my position on the map'}</button><button class="btn" id="locate-udp-player" ${udpMode.locationPending ? 'disabled' : ''}>${language === 'pt' ? 'Permitir localização' : 'Allow location'}</button>`;
   }
   if (udpMode.helperError) {
     const labels = {
@@ -1194,6 +1235,7 @@ function renderUdpResults() {
     try { await navigator.clipboard.writeText(button.dataset.cmd); button.textContent = tr('copied'); }
     catch (error) { button.textContent = tr('copyError'); }
   }));
+  document.getElementById('mark-udp-player')?.addEventListener('click', () => markUdpPlayerOnMap());
   document.getElementById('locate-udp-player')?.addEventListener('click', () => locateUdpPlayer());
   document.getElementById('change-udp-destination')?.addEventListener('click', () => {
     udpMode.phase = 'choosing'; udpMode.destination = null; udpMode.routes = [];
