@@ -1150,7 +1150,7 @@ function renderUdpResults() {
       const entryGeo = route.candidate.info;
       const chain = route.path.slice(0, -1).join('@');
       const connectAddress = udpMode.connectAddress || udpMode.destination;
-      const command = chain ? `cl_proxyaddr ${chain}; connect ${connectAddress}` : `cl_proxyaddr ""; connect ${connectAddress}`;
+      const command = chain ? `cl_proxyaddr ${chain}; connect ${connectAddress}` : `connect ${connectAddress}`;
       const proxyHops = route.path.map((pathAddr, i) => {
         const geo = route.path_geo?.[i];
         const place = geo ? `${countryFlag(geo.country_code)} ${geo.city}` : pathAddr;
