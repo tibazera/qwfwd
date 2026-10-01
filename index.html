@@ -1123,7 +1123,7 @@ async function chooseUdpDestination(destination) {
     }
   } catch { run.collectorFailed = true; }
   if (udpMode !== run) return;
-  run.routes = routes.sort((a, b) => (a.qualityRankMs ?? a.totalMeasuredLegsMs) - (b.qualityRankMs ?? b.totalMeasuredLegsMs)).slice(0, 3);
+  run.routes = routes.sort((a, b) => a.totalMeasuredLegsMs - b.totalMeasuredLegsMs || a.path.length - b.path.length || (a.qualityRankMs ?? a.totalMeasuredLegsMs) - (b.qualityRankMs ?? b.totalMeasuredLegsMs)).slice(0, 3);
   udpMode.phase = 'results';
   renderUdpState();
 }
