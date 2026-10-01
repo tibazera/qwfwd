@@ -1000,7 +1000,7 @@ function renderUdpState() {
     return;
   }
   if (udpMode.phase === 'calculating') {
-    document.getElementById('panel').innerHTML = `<h2>${tr('udpTitle')}</h2><div class="udp-location">${udpMode.destination}</div><div class="overlay-msg" style="position:static;transform:none;margin:18px 0"><div class="spinner"></div>${tr('calculating')}</div>`;
+    document.getElementById('panel').innerHTML = `<h2>${tr('udpTitle')}</h2><div class="udp-location">${escapeHtml(udpMode.destination)}</div><div class="overlay-msg" style="position:static;transform:none;margin:18px 0"><div class="spinner"></div>${escapeHtml(udpMode.progress || tr('calculating'))}</div>${udpMode.scanTotal ? `<progress aria-label="UDP" max="${udpMode.scanTotal}" value="${udpMode.scanDone || 0}" style="width:100%"></progress>` : ''}`;
     return;
   }
   if (udpMode.phase === 'results') renderUdpResults();
@@ -1043,7 +1043,7 @@ async function resolveServerAddress(address) {
 }
 
 async function chooseUdpDestination(destination) {
-  udpMode = { ...udpMode, routes: [], collectorFailed: false, helperError: null };
+  udpMode = { ...udpMode, routes: [], collectorFailed: false, helperError: null, progress: '', scanTotal: 0, scanDone: 0 };
   clearCityGroup();
   const run = udpMode;
   // Location only draws the player-to-entry leg; UDP still decides ranking.
@@ -1080,12 +1080,19 @@ async function chooseUdpDestination(destination) {
   const candidates = udpEntryCandidates();
   const measuredRtts = new Map();
   const targets = [...candidates.map(c => c.addr), run.destination];
+  run.scanTotal = targets.length;
+  run.progress = language === 'pt' ? `Medindo UDP: 0/${targets.length} destinos` : `Measuring UDP: 0/${targets.length} targets`;
+  renderUdpState();
   let cursor = 0;
   await Promise.all(Array.from({ length: Math.min(6, targets.length) }, async () => {
     while (cursor < targets.length && udpMode === run) {
       const addr = targets[cursor++];
       const rtt = await measureViaLocalApp(addr);
       if (Number.isFinite(rtt) && rtt > 0) measuredRtts.set(addr, rtt);
+      if (udpMode !== run) return;
+      run.scanDone++;
+      run.progress = language === 'pt' ? `Medindo UDP: ${run.scanDone}/${targets.length} · ${measuredRtts.size} responderam · último: ${addr}` : `Measuring UDP: ${run.scanDone}/${targets.length} · ${measuredRtts.size} replied · last: ${addr}`;
+      renderUdpState();
     }
   }));
   if (udpMode !== run) return;
@@ -1100,6 +1107,8 @@ async function chooseUdpDestination(destination) {
     // Bound URL size and honor the collector's entry limit.
     for (let i = 0; i < measured.length; i += 16) {
       const batch = measured.slice(i, i + 16);
+      run.progress = language === 'pt' ? `Calculando rotas na malha: lote ${Math.floor(i / 16) + 1}/${Math.ceil(measured.length / 16)}` : `Calculating mesh routes: batch ${Math.floor(i / 16) + 1}/${Math.ceil(measured.length / 16)}`;
+      renderUdpState();
       const response = await fetch(`${COLLECTOR_BASE}/routes-to?to=${encodeURIComponent(run.destination)}&entries=${encodeURIComponent(batch.map(c => c.addr).join(','))}`, { cache: 'no-store', signal: AbortSignal.timeout(10000) });
       if (!response.ok) throw new Error('collector unavailable');
       const data = await response.json();
