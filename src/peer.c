@@ -3,6 +3,7 @@
 */
 
 #include "qwfwd.h"
+#include "stun.h"
 
 peer_t *peers = NULL;
 static int userid = 0;
@@ -775,6 +776,11 @@ retry:
 
         continue;
       }
+
+      // STUN Binding Requests (opt-in via stun_enable) never start with the
+      // 0xFFFFFFFF OOB marker; STUN_HandlePacket is a fast no-op otherwise.
+      if (STUN_HandlePacket(net_message.data, net_message.cursize, &net_from))
+        continue;
 
       MSG_BeginReading();
       connectionless = (MSG_ReadLong() == -1);

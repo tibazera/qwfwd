@@ -491,6 +491,46 @@ void				SVC_QRY_ParseMasterReply(void);
 void				SVC_QRY_PingStatus(void);
 
 //
+// mesh (query.c) - P2P discovery between qwfwd instances
+//
+
+// wire marker for mesh replies: 0xFF 0xFF 0xFF 0xFF 'Q' 'M' <type> <nonce:4>
+// distinct from A2C_PRINT ('n') so it can never collide with any existing
+// out-of-band text reply (status errors, master replies, plain pingstatus
+// text query, etc). 'Q','M' = "Query Mesh".
+#define MESH_MAGIC0 'Q'
+#define MESH_MAGIC1 'M'
+
+#define MESH_MSG_PINGSTATUS_REPLY	1	// reply to our own "pingstatus" probe
+#define MESH_MSG_MESHSTATUS_REPLY	2	// reply to "meshstatus" collector query
+
+// hard cap on hop2 entries kept per mesh peer - bounds memory AND must fit
+// a single peer block inside one unfragmented UDP datagram (MAX_MSGLEN).
+// Each entry is 12 bytes (ip+port+ping+jitter+loss_pct); a peer block also
+// carries a 10-byte sub-header. 100 * 12 + 10 = 1210 bytes, safely under
+// MAX_MSGLEN (1450) with headroom for the mesh reply's own 11-byte OOB
+// header - unlike the previous value (128), which could produce a block
+// (128*12+10=1546) that never fits and would stall meshstatus pagination
+// against a legitimately (or maliciously) large hop2 set.
+#define MESH_MAX_HOP2_PER_PEER 100
+
+// one measured edge: <peer> -> <addr> costs <ping> ms avg, as reported by
+// <peer>, with quality stats accumulated over that peer's own natural ping
+// cadence (see PING_QUALITY_WINDOW in query.c) - not a single sample
+typedef struct hop2_entry_s
+{
+	struct sockaddr_in	addr;		// target address (not the peer itself)
+	int					ping;		// average ping in ms, as reported by the peer
+	int					jitter;		// stddev of ping in ms
+	int					loss_pct;	// packet loss percent (0-100)
+} hop2_entry_t;
+
+qbool				QRY_Mesh_IsMeshReply(void);
+void				QRY_Mesh_HandleReply(void);
+void				SVC_QRY_MeshProbe(void);
+void				SVC_QRY_MeshStatus(void);
+
+//
 // huff.c
 //
 
