@@ -30,6 +30,7 @@ static int GetGlobalProbeSocketsOpen(void) {
 typedef struct {
 	peer_t  *peer;
 	probe_t *probe; // NULL when the entry is the peer's main socket
+	qbool    alt;   // entry is the peer's multipath standby socket (alt_s)
 } pfd_owner_t;
 
 // Both are complete connectionless packets, including the 0xffffffff
@@ -53,6 +54,137 @@ static void FWD_ProbePayload(const peer_t *p, const void **payload, int *payload
 cvar_t *sv_pathprobe_enable;
 cvar_t *sv_pathprobe_count;
 cvar_t *sv_pathprobe_delay;
+cvar_t *multipath_enable;
+cvar_t *multipath_switch_ms;
+cvar_t *multipath_notify;
+
+// Multipath data plane: client->server goes out p->s only (duplicating would
+// make the server flip the client address on every packet), alt_s is a hot
+// standby source port (pathprobe runner-up). Both are health-pinged; on switch
+// mvdsv remaps the address through qport. Server->client is accepted from both
+// sockets so in-flight packets to the old port are not lost.
+// ponytail: 2 paths, 1 ping/s, EWMA rtt + miss count; jitter/loss% scoring if it flaps
+static void FWD_mp_switch(peer_t *p, double now, const char *why)
+{
+	int s = p->s, m = p->mp_miss[0];
+	double t = p->mp_rtt[0];
+
+	Sys_Printf("peer %s:%d multipath switch (%s) %.0fms -> %.0fms\n", inet_ntoa(p->from.sin_addr),
+		(int)ntohs(p->from.sin_port), why, p->mp_rtt[0], p->mp_rtt[1]);
+	// tell the player: OOB print from our address shows up in the client console; empty cvar = silent
+	if (multipath_notify->string[0])
+		Netchan_OutOfBandPrint(net_socket, &p->from, "%c%s &c0f0(%s)&r\n", A2C_PRINT, multipath_notify->string, why);
+	p->s = p->alt_s;
+	p->alt_s = s;
+	p->mp_rtt[0] = p->mp_rtt[1];
+	p->mp_rtt[1] = t;
+	p->mp_miss[0] = p->mp_miss[1];
+	p->mp_miss[1] = m;
+	p->mp_acked[0] = p->mp_acked[1] = false;
+	p->mp_wins = 0;
+	p->mp_switch_at = p->mp_rx_at = now;
+}
+
+static void FWD_mp_tick(peer_t *p)
+{
+	double now = Sys_DoubleTime();
+	int i;
+
+	if (p->alt_s == INVALID_SOCKET || p->ps != ps_connected)
+		return;
+
+	// in game client and server both stream every frame: client still talking but server
+	// silent for 500ms means the path died. Loading/downloading = client quiet too, no switch.
+	// signon: client streams but server only answers when it has data, so also require the
+	// server to have been streaming (>= 20 pps last second; in game it is sv fps, ~77).
+	if (p->mp_rx_rate >= 20 && now - p->mp_tx_at < 0.1 && now - p->mp_rx_at > 0.5 &&
+		!p->mp_miss[1] && now - p->mp_switch_at > 1.0)
+		FWD_mp_switch(p, now, "silence");
+
+	if (now - p->mp_ping_at < 1.0)
+		return;
+
+	p->mp_rx_rate = p->mp_rx_count;
+	p->mp_rx_count = 0;
+
+	for (i = 0; p->mp_ping_at && i < 2; i++)
+		p->mp_miss[i] = p->mp_acked[i] ? 0 : p->mp_miss[i] + 1;
+
+	p->mp_wins = (!p->mp_miss[1] && p->mp_rtt[1] + bound(1, multipath_switch_ms->integer, 200) < p->mp_rtt[0]) ? p->mp_wins + 1 : 0;
+
+	// primary dead (3 pings) and alt alive, or alt faster 3 ticks in a row outside 10s cooldown
+	if (p->mp_miss[0] >= 3 && !p->mp_miss[1])
+		FWD_mp_switch(p, now, "loss");
+	else if (p->mp_wins >= 3 && now - p->mp_switch_at > 10.0)
+		FWD_mp_switch(p, now, "rtt");
+
+	p->mp_ping_at = now;
+	p->mp_acked[0] = p->mp_acked[1] = false;
+	Netchan_OutOfBandPrint(p->s, &p->to, "%c\n", A2A_PING);
+	Netchan_OutOfBandPrint(p->alt_s, &p->to, "%c\n", A2A_PING);
+}
+
+static void FWD_mp_ack(peer_t *p, int idx)
+{
+	double ms = (Sys_DoubleTime() - p->mp_ping_at) * 1000.0;
+	if (p->mp_acked[idx] || ms > 1000.0)
+		return; // late or duplicate ack
+	p->mp_acked[idx] = true;
+	if (p->mp_miss[idx])
+		return; // after a miss this may be the previous ping's ack: liveness only, no rtt
+	p->mp_rtt[idx] = p->mp_rtt[idx] ? p->mp_rtt[idx] * 0.75 + ms * 0.25 : ms;
+}
+
+static void FWD_mp_close_alt(peer_t *p)
+{
+	if (p->alt_s != INVALID_SOCKET && p->alt_s != p->s)
+		closesocket(p->alt_s);
+	p->alt_s = INVALID_SOCKET;
+}
+
+// read everything pending on one remote-facing socket, idx 0 = p->s, 1 = p->alt_s
+static void FWD_read_remote(peer_t *p, int sock, int idx)
+{
+	for (;;) {
+		if (!NET_GetPacket(sock, &net_message))
+			break;
+
+		// check for bans.
+		if (SV_IsBanned(&net_from))
+			continue;
+
+		// we should check is this packet from remote server, this may be some
+		// evil packet from haxors...
+		if (!NET_CompareAddress(&p->to, &net_from))
+			continue;
+
+		if (idx == 0) {
+			p->mp_rx_at = Sys_DoubleTime();
+			p->mp_rx_count++;
+		}
+
+		if (net_message.cursize == 1 && net_message.data[0] == A2A_ACK) {
+			if (p->alt_s != INVALID_SOCKET)
+				FWD_mp_ack(p, idx);
+			continue;
+		}
+
+		MSG_BeginReading();
+		if (MSG_ReadLong() == -1) {
+			if (MSG_BadRead())
+				continue;
+
+			if (!CL_ConnectionlessPacket(p))
+				continue; // seems we do not need forward it
+
+			NET_SendPacket(net_socket, net_message.cursize, net_message.data, &p->from);
+			continue;
+		}
+
+		if (p->ps >= ps_connected)
+			NET_SendPacket(net_socket, net_message.cursize, net_message.data, &p->from);
+	}
+}
 
 peer_t	*FWD_peer_by_addr(struct sockaddr_in *from)
 {
@@ -111,6 +243,7 @@ peer_t	*FWD_peer_new(const char *remote_host, int remote_port, struct sockaddr_i
 			return NULL; // out of sockets?
 
 		p = Sys_malloc(sizeof(*p)); // alloc peer if needed
+		p->alt_s = INVALID_SOCKET;
 	}
 
 	p->s		= ( new_peer ) ? s : p->s; // reuse socket in case of reusing
@@ -178,6 +311,8 @@ static void FWD_peer_free(peer_t *peer, qbool unlink)
 			peer->probes[i].s = INVALID_SOCKET;
 		}
 	}
+
+	FWD_mp_close_alt(peer);
 
 	// free all data related to peer
 	if (peer->s) { // there should be no zero socket, it's stdin
@@ -260,6 +395,9 @@ void FWD_PeerStartProbing(peer_t *p) {
       closesocket(p->probes[i].s);
     }
   }
+
+  // a reconnect re-probes from scratch; the old standby path is stale
+  FWD_mp_close_alt(p);
 
   p->ps = ps_pingprobe;
   p->num_probes = 0;
@@ -381,13 +519,41 @@ static void FWD_CheckProbeCompletion(peer_t *p) {
     // Keep the original socket, including if no probe socket was available.
   }
 
+  // Multipath: keep the runner-up as hot standby. Not when the next hop is
+  // another qwfwd: it matches peers by full ip:port, not qport, so a switch
+  // would orphan us there.
+  if (best_idx != -1 && multipath_enable->integer) {
+    char next_hop[MAX_INFO_STRING];
+    int alt_idx = -1;
+    double alt_rtt = 99999.0;
+
+    Info_ValueForKey(p->userinfo, QWFWD_PRX_KEY, next_hop, sizeof(next_hop));
+    for (i = 0; !next_hop[0] && i < p->num_probes; i++) {
+      if (i != best_idx && p->probes[i].rtt > 0 && p->probes[i].rtt < alt_rtt) {
+        alt_rtt = p->probes[i].rtt;
+        alt_idx = i;
+      }
+    }
+    if (alt_idx != -1) {
+      p->alt_s = p->probes[alt_idx].s;
+      p->mp_rtt[0] = best_rtt * 1000.0;
+      p->mp_rtt[1] = alt_rtt * 1000.0;
+      p->mp_ping_at = p->mp_switch_at = p->mp_rx_at = p->mp_tx_at = 0;
+      p->mp_miss[0] = p->mp_miss[1] = p->mp_wins = p->mp_rx_count = p->mp_rx_rate = 0;
+    }
+  }
+
   // Close other sockets
   for (i = 0; i < p->num_probes; i++) {
-    if (p->probes[i].s != p->s && p->probes[i].s != INVALID_SOCKET) {
+    if (p->probes[i].s != p->s && p->probes[i].s != p->alt_s && p->probes[i].s != INVALID_SOCKET) {
       closesocket(p->probes[i].s);
       p->probes[i].s = INVALID_SOCKET;
     }
   }
+  // s and alt_s are now owned by the peer fields; s and alt_s swap on a
+  // multipath switch, so stale copies here would be closed twice on free/reprobe
+  for (i = 0; i < p->num_probes; i++)
+    p->probes[i].s = INVALID_SOCKET;
 
   // Send connection packet to client now that we are ready
   if (p->proto == pr_qw) {
@@ -466,10 +632,12 @@ static void FWD_network_update(void) {
       p->probes[i].revents = 0;
     }
 
+    p->alt_revents = 0;
+
     if (p->ps == ps_pingprobe) {
       max_fds += p->num_probes;
     } else {
-      max_fds++;
+      max_fds += (p->alt_s != INVALID_SOCKET) ? 2 : 1;
     }
   }
 
@@ -504,6 +672,15 @@ static void FWD_network_update(void) {
       owners[nfds].peer = p;
       owners[nfds].probe = NULL;
       nfds++;
+      if (p->alt_s != INVALID_SOCKET && nfds < max_fds) {
+        pfds[nfds].fd = p->alt_s;
+        pfds[nfds].events = POLLIN;
+        pfds[nfds].revents = 0;
+        owners[nfds].peer = p;
+        owners[nfds].probe = NULL;
+        owners[nfds].alt = true;
+        nfds++;
+      }
     }
   }
 
@@ -540,6 +717,8 @@ retry:
   for (i = 0; i < nfds; i++) {
     if (owners[i].probe) {
       owners[i].probe->revents = pfds[i].revents;
+    } else if (owners[i].alt) {
+      owners[i].peer->alt_revents = pfds[i].revents;
     } else if (owners[i].peer) {
       owners[i].peer->revents = pfds[i].revents;
     }
@@ -625,6 +804,8 @@ retry:
 
         for (; cnt > 0; cnt--)
           NET_SendPacket(p->s, net_message.cursize, net_message.data, &p->to);
+        if (!connectionless)
+          p->mp_tx_at = Sys_DoubleTime();
       }
 
       time(&p->last);
@@ -645,43 +826,13 @@ retry:
       continue; // Skip normal processing for this peer
     }
 
-    if (p->revents & POLLIN) {
-      // yeah, we have packet, read it then
-      for (;;) {
-        if (!NET_GetPacket(p->s, &net_message))
-          break;
-
-        // check for bans.
-        if (SV_IsBanned(&net_from))
-          continue;
-
-        // we should check is this packet from remote server, this may be some
-        // evil packet from haxors...
-        if (!NET_CompareAddress(&p->to, &net_from))
-          continue;
-
-        MSG_BeginReading();
-        if (MSG_ReadLong() == -1) {
-          if (MSG_BadRead())
-            continue;
-
-          if (!CL_ConnectionlessPacket(p))
-            continue; // seems we do not need forward it
-
-          NET_SendPacket(net_socket, net_message.cursize, net_message.data,
-                         &p->from);
-          continue;
-        }
-
-        if (p->ps >= ps_connected)
-          NET_SendPacket(net_socket, net_message.cursize, net_message.data,
-                         &p->from);
-
-        // qqshka: commented out
-        //				time(&p->last);
-
-      } // for (;;)
-    } // if(POLLIN)
+    // revents belong to the sockets polled this pass; a switch inside
+    // FWD_mp_tick happens after both reads, so they still line up
+    if (p->revents & POLLIN)
+      FWD_read_remote(p, p->s, 0);
+    if (p->alt_s != INVALID_SOCKET && (p->alt_revents & POLLIN))
+      FWD_read_remote(p, p->alt_s, 1);
+    FWD_mp_tick(p);
 
     if (p->ps == ps_challenge || p->ps == ps_connecting) {
       // send challenge time to time

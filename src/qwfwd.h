@@ -189,6 +189,20 @@ typedef struct peer
 	probe_t probes[MAX_PING_PROBES];
 	int num_probes;
 	double probe_start_time;
+
+	// multipath: runner-up probe socket kept as hot standby, see FWD_mp_tick()
+	int alt_s;						// INVALID_SOCKET if none
+	short alt_revents;				// poll() result for alt_s
+	double mp_ping_at;				// last health ping
+	double mp_rtt[2];				// EWMA rtt ms: [0] = s, [1] = alt_s
+	int mp_miss[2];					// consecutive unanswered health pings
+	qbool mp_acked[2];
+	int mp_wins;					// consecutive ticks alt_s beat s
+	double mp_switch_at;			// last switch, for cooldown
+	double mp_rx_at;				// last packet from remote on s
+	double mp_tx_at;				// last client packet forwarded to remote
+	int mp_rx_count;				// packets from remote on s since last tick
+	int mp_rx_rate;					// ... in the previous 1s tick (pps)
 } peer_t;
 
 // used for passing params for thread
@@ -256,6 +270,7 @@ extern proxy_static_t ps;
 extern cvar_t *developer, *maxclients, *hostname;
 extern cvar_t *hostport, *countrycode, *city, *coords;
 extern cvar_t *sv_pathprobe_enable, *sv_pathprobe_count, *sv_pathprobe_delay;
+extern cvar_t *multipath_enable, *multipath_switch_ms, *multipath_notify;
 
 //
 // token.c
