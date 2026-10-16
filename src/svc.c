@@ -312,6 +312,10 @@ static void SVC_DirectConnect (void)
 			do_probe = false;
 		}
 
+		// no probe on this connect (opt-out, q3, chained): never keep a standby from an earlier one
+		if (!do_probe)
+			FWD_mp_close_alt(p);
+
 		if (do_probe) {
 			if (p->ps == ps_challenge) {
 				FWD_PeerStartProbing(p);

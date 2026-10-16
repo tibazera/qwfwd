@@ -312,6 +312,7 @@ peer_t		*FWD_peer_by_addr(struct sockaddr_in *from);
 peer_t		*FWD_peer_new(const char *remote_host, int remote_port, struct sockaddr_in *from, const char *userinfo, int qport, protocol_t proto, qbool link);
 void		FWD_update_peers(void);
 void		FWD_PeerStartProbing(peer_t *p);
+void		FWD_mp_close_alt(peer_t *p);
 
 int			FWD_peers_count(void);
 

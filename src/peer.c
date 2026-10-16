@@ -64,6 +64,13 @@ cvar_t *multipath_notify;
 // mvdsv remaps the address through qport. Server->client is accepted from both
 // sockets so in-flight packets to the old port are not lost.
 // ponytail: 2 paths, 1 ping/s, EWMA rtt + miss count; jitter/loss% scoring if it flaps
+void FWD_mp_close_alt(peer_t *p)
+{
+	if (p->alt_s != INVALID_SOCKET && p->alt_s != p->s)
+		closesocket(p->alt_s);
+	p->alt_s = INVALID_SOCKET;
+}
+
 static void FWD_mp_switch(peer_t *p, double now, const char *why)
 {
 	int s = p->s, m = p->mp_miss[0];
@@ -83,6 +90,8 @@ static void FWD_mp_switch(peer_t *p, double now, const char *why)
 	p->mp_acked[0] = p->mp_acked[1] = false;
 	p->mp_wins = 0;
 	p->mp_switch_at = p->mp_rx_at = now;
+	// new primary must prove it streams before silence can fire again
+	p->mp_rx_rate = p->mp_rx_count = 0;
 }
 
 static void FWD_mp_tick(peer_t *p)
@@ -92,6 +101,12 @@ static void FWD_mp_tick(peer_t *p)
 
 	if (p->alt_s == INVALID_SOCKET || p->ps != ps_connected)
 		return;
+
+	// runtime kill switch: drop the standby, stay on the current path
+	if (!multipath_enable->integer) {
+		FWD_mp_close_alt(p);
+		return;
+	}
 
 	// in game client and server both stream every frame: client still talking but server
 	// silent for 500ms means the path died. Loading/downloading = client quiet too, no switch.
@@ -135,12 +150,6 @@ static void FWD_mp_ack(peer_t *p, int idx)
 	p->mp_rtt[idx] = p->mp_rtt[idx] ? p->mp_rtt[idx] * 0.75 + ms * 0.25 : ms;
 }
 
-static void FWD_mp_close_alt(peer_t *p)
-{
-	if (p->alt_s != INVALID_SOCKET && p->alt_s != p->s)
-		closesocket(p->alt_s);
-	p->alt_s = INVALID_SOCKET;
-}
 
 // read everything pending on one remote-facing socket, idx 0 = p->s, 1 = p->alt_s
 static void FWD_read_remote(peer_t *p, int sock, int idx)
@@ -245,6 +254,10 @@ peer_t	*FWD_peer_new(const char *remote_host, int remote_port, struct sockaddr_i
 		p = Sys_malloc(sizeof(*p)); // alloc peer if needed
 		p->alt_s = INVALID_SOCKET;
 	}
+
+	// reused for another protocol or destination: the old standby path is meaningless
+	if (!new_peer && (proto != p->proto || !NET_CompareAddress(&p->to, &to)))
+		FWD_mp_close_alt(p);
 
 	p->s		= ( new_peer ) ? s : p->s; // reuse socket in case of reusing
 	p->from		= *from;
